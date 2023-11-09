@@ -5,6 +5,10 @@
 
 Scraper for public LinkedIn Newsletters and make them accessible by a RSS feed.
 
+<img src="https://pbs.twimg.com/profile_images/1661161645857710081/6WtDIesg_400x400.png" alt="linkedin" width="200"/>
+<img src="https://png.pngtree.com/png-vector/20190802/ourlarge/pngtree-funnel-icon-png-image_1650353.jpg" alt="funnel" width="200"/>
+<img src="https://wp-assets.rss.com/blog/wp-content/uploads/2019/10/10111557/social_style_3_rss-512-1.png" alt="linkedin" width="200"/>
+
 ## Usage
 
 Take a newsletter such as [The AI Beat](https://www.linkedin.com/newsletters/7025619738558926848/)
