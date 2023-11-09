@@ -8,16 +8,30 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - uses: actions/checkout@v2
 
   deploy:
     runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
     environment: production
     needs: test
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4.0.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Cache node modules
+        id: cache-node-modules
+        uses: actions/cache@704facf57e6136b1bc63b828d79edcd491f0ee84 # v3.3.2
+        with:
+          path: node_modules
+          key: npm-${{ hashFiles('package-lock.json') }}
+
+      - name: NPM Install
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm install
       - name: Build & Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
