@@ -1,0 +1,25 @@
+name: Deploy Worker
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v2
+
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    needs: test
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build & Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
