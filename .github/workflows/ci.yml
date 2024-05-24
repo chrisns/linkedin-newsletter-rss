@@ -31,7 +31,7 @@ jobs:
       - run: npm install --omit=dev 
 
       - name: Build & Deploy Worker
-        uses: cloudflare/wrangler-action@65240351f77618cc4d505904856f15ede9e531ef # v3
+        uses: cloudflare/wrangler-action@a08dc762e87e8754e0d56a16a35a70b406bc869f # v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
