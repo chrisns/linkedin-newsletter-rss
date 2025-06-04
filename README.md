@@ -15,9 +15,7 @@ Take a newsletter such as [The AI Beat](https://www.linkedin.com/newsletters/702
 
 Notice the URL looks something like: `https://www.linkedin.com/newsletters/7025619738558926848/`
 
-The the last bit (`7025619738558926848`) which is the newsletter ID.
-
-Which then plonk that at the end of `https://linkedinrss.cns.me/`
+The last bit (`7025619738558926848`) is the newsletter ID.
 
 Giving you an address like [`https://linkedinrss.cns.me/7025619738558926848`](https://linkedinrss.cns.me/7025619738558926848)
 
