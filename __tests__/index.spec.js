@@ -13,11 +13,13 @@ describe("Newsletter RSS", () => {
     await worker.stop();
   });
 
-  it("check a stale news letter and give a consistent response", async () => {
+  it("check a stale newsletter and give a consistent response.", async () => {
     // picking a stale newsletter https://www.linkedin.com/newsletters/james-caan-s-business-secrets-6676195873757679616/
     const resp = await worker.fetch(
       "/james-caan-s-business-secrets-6676195873757679616"
     );
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("content-type")).toBe("application/rss+xml");
     const text = await resp.text();
     expect(text).toContain("<title>James Caan&apos;s Business Secrets</title>");
     expect(text).toContain(
