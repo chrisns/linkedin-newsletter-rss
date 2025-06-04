@@ -54,7 +54,12 @@ async function main(newsletter, self_url) {
     "section.newsletter__editions-container ul.newsletter__updates div.share-article"
   )) {
     const article = $(item);
-    const link = article.find("a").attr("href").split("?")[0];
+    // safeguard in case an expected link is missing
+    const linkAttr = article.find("a").attr("href");
+    if (!linkAttr) {
+      continue; // skip items without a link
+    }
+    const link = linkAttr.split("?")[0];
     const articleContent = await (await fetch(link)).text();
     // Parse the fetched article HTML
     const $Content = cheerio.load(articleContent);
