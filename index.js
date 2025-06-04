@@ -56,9 +56,8 @@ async function main(newsletter, self_url) {
     const article = $(item);
     const link = article.find("a").attr("href").split("?")[0];
     const articleContent = await (await fetch(link)).text();
+    // Parse the fetched article HTML
     const $Content = cheerio.load(articleContent);
-    // const $ = cheerio.load(articleContent);
-    // const img = articleContent("img.cover-img__image").html();
     const img = $Content("img.cover-img__image").attr("src");
     const title = $Content("h1").text().trim();
     const pubDate = $Content(".base-main-card__metadata")
