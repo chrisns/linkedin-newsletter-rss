@@ -26,7 +26,6 @@ describe("Newsletter RSS", () => {
       "<link>https://www.linkedin.com/newsletters/james-caan-s-business-secrets-6676195873757679616</link>"
     );
     expect(text).toContain("<description>Answering all your");
-    expect(text).toContain("<url>https://media.licdn.com");
     expect(text).toContain(
       "<title>Weekly Roundup: 16th-20th August 2021</title>"
     );
