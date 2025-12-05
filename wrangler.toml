@@ -1,7 +1,7 @@
 name = "linkedin-newsletter-rss"
 main = "index.js"
-compatibility_date = "2023-11-09"
+compatibility_date = "2024-09-23"
 workers_dev = true
-node_compat = true
+compatibility_flags = ["nodejs_compat"]
 
 route = { pattern = "linkedinrss.cns.me/*", zone_name = "cns.me" }
