@@ -1,6 +1,8 @@
 import * as cheerio from "cheerio";
 import xml from "xml";
 
+const BROWSER_UA = "Mozilla/5.0 (compatible)";
+
 /**
  * Parse newsletter listing page to extract metadata and article links.
  */
@@ -56,6 +58,43 @@ export function findParentNewsletter(html) {
     }
   });
   return slug;
+}
+
+/**
+ * Extract the author's profile username from an article page's HTML.
+ * Returns the first /in/ link that isn't from comments.
+ */
+export function findAuthorProfile(html) {
+  const $ = cheerio.load(html);
+  let username = null;
+  $('a[href*="/in/"]').each((_, el) => {
+    if (username) return;
+    const href = $(el).attr("href") || "";
+    // Skip comment author links (they have tracking params)
+    if (href.includes("trk=")) return;
+    const match = href.match(/\/in\/([^/?]+)/);
+    if (match) username = match[1];
+  });
+  return username;
+}
+
+/**
+ * Extract pulse article links from a LinkedIn profile page's HTML.
+ */
+export function parseProfileArticles(html) {
+  const $ = cheerio.load(html);
+  const links = [];
+  $('a[href*="/pulse/"]').each((_, el) => {
+    const href = $(el).attr("href");
+    if (href) {
+      const clean = href.split("?")[0];
+      const full = clean.startsWith("http")
+        ? clean
+        : `https://www.linkedin.com${clean}`;
+      if (!links.includes(full)) links.push(full);
+    }
+  });
+  return links;
 }
 
 /**
@@ -308,7 +347,51 @@ export default {
           return Response.redirect(`${base.origin}/${newsletterSlug}`, 302);
         }
 
-        // Standalone article - generate a single-item RSS feed
+        // Standalone article - try to find more articles by the same author
+        const authorUsername = findAuthorProfile(articleHtml);
+        if (authorUsername) {
+          const profileUrl = `https://www.linkedin.com/in/${authorUsername}`;
+          const profileResponse = await fetch(profileUrl, {
+            headers: { "User-Agent": BROWSER_UA },
+          });
+          if (profileResponse.ok) {
+            const profileHtml = await profileResponse.text();
+            const articleLinks = parseProfileArticles(profileHtml);
+            if (articleLinks.length > 0) {
+              const results = await Promise.allSettled(
+                articleLinks.map((link) => fetchAndParseArticle(link))
+              );
+              const articles = results
+                .filter((r) => r.status === "fulfilled")
+                .map((r) => r.value);
+              results
+                .filter((r) => r.status === "rejected")
+                .forEach((r) =>
+                  console.error(`Article fetch failed: ${r.reason.message}`)
+                );
+              if (articles.length > 0) {
+                const authorName =
+                  articles[0].author || authorUsername;
+                const metadata = {
+                  title: `Articles by ${authorName}`,
+                  description: `Articles by ${authorName} on LinkedIn`,
+                  imageUrl: articles[0].img,
+                  link: profileUrl,
+                };
+                const xmlContent = buildRssFeed(
+                  metadata,
+                  articles,
+                  request.url
+                );
+                return new Response(xmlContent, {
+                  headers: { "Content-Type": "application/rss+xml" },
+                });
+              }
+            }
+          }
+        }
+
+        // Fallback: single-item feed from just this article
         const article = { ...parseArticlePage(articleHtml), link: articleUrl };
         const metadata = {
           title: article.title,

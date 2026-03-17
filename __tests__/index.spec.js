@@ -6,6 +6,8 @@ import {
   buildRssFeed,
   fetchAndParseArticle,
   findParentNewsletter,
+  findAuthorProfile,
+  parseProfileArticles,
 } from "../index.js";
 
 // --- Fixtures ---
@@ -133,6 +135,39 @@ const standaloneArticleHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
+const standaloneArticleWithAuthorHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <script type="application/ld+json">
+  {
+    "name": "Teaching a Computer BSL",
+    "datePublished": "2025-06-01T12:00:00.000Z",
+    "author": { "name": "Chris Nesbitt-Smith" },
+    "image": { "url": "https://media.licdn.com/bsl-cover.jpg" }
+  }
+  </script>
+</head>
+<body>
+  <h1>Teaching a Computer BSL</h1>
+  <a href="https://uk.linkedin.com/in/cnesbittsmith">Chris Nesbitt-Smith</a>
+  <a href="https://uk.linkedin.com/in/someone-else?trk=comment">Commenter</a>
+  <div data-test-id="article-content-blocks">
+    <div class="article-main__content"><p>Sign language recognition is fascinating.</p></div>
+  </div>
+</body>
+</html>`;
+
+const profilePageHtml = `<!DOCTYPE html>
+<html>
+<head><title>Chris Nesbitt-Smith | LinkedIn</title></head>
+<body>
+  <h1>Chris Nesbitt-Smith</h1>
+  <a href="https://www.linkedin.com/pulse/teaching-computer-understand-bsl-cns-rhs8e">Article 1</a>
+  <a href="https://www.linkedin.com/pulse/another-article-cns-xyz123?trackingId=abc">Article 2</a>
+  <a href="https://www.linkedin.com/feed/update/123">Not an article</a>
+</body>
+</html>`;
+
 // --- Pure function tests ---
 
 describe("parseNewsletterPage", () => {
@@ -194,6 +229,39 @@ describe("findParentNewsletter", () => {
 
   it("returns null for standalone article", () => {
     expect(findParentNewsletter(standaloneArticleHtml)).toBeNull();
+  });
+});
+
+describe("findAuthorProfile", () => {
+  it("extracts author username from article page", () => {
+    expect(findAuthorProfile(standaloneArticleWithAuthorHtml)).toBe(
+      "cnesbittsmith"
+    );
+  });
+
+  it("skips comment author links with tracking params", () => {
+    // Should find cnesbittsmith, not someone-else (which has trk= param)
+    expect(findAuthorProfile(standaloneArticleWithAuthorHtml)).toBe(
+      "cnesbittsmith"
+    );
+  });
+
+  it("returns null when no profile link exists", () => {
+    expect(findAuthorProfile(emptyNewsletterPageHtml)).toBeNull();
+  });
+});
+
+describe("parseProfileArticles", () => {
+  it("extracts unique pulse article links", () => {
+    const links = parseProfileArticles(profilePageHtml);
+    expect(links).toEqual([
+      "https://www.linkedin.com/pulse/teaching-computer-understand-bsl-cns-rhs8e",
+      "https://www.linkedin.com/pulse/another-article-cns-xyz123",
+    ]);
+  });
+
+  it("returns empty array when no articles found", () => {
+    expect(parseProfileArticles(emptyNewsletterPageHtml)).toEqual([]);
   });
 });
 
@@ -438,10 +506,19 @@ describe("Pulse article URLs (mocked)", () => {
     );
   });
 
-  it("generates single-item feed for standalone article", async () => {
-    globalThis.fetch = vi.fn(() =>
-      Promise.resolve(new Response(standaloneArticleHtml))
-    );
+  it("generates author feed for standalone article with profile lookup", async () => {
+    globalThis.fetch = vi.fn((input) => {
+      const url = typeof input === "string" ? input : input.url;
+      // Article page fetch
+      if (url.includes("/pulse/")) {
+        return Promise.resolve(new Response(standaloneArticleWithAuthorHtml));
+      }
+      // Profile page fetch
+      if (url.includes("/in/cnesbittsmith")) {
+        return Promise.resolve(new Response(profilePageHtml));
+      }
+      return Promise.resolve(new Response("Not Found", { status: 404 }));
+    });
 
     const response = await SELF.fetch(
       "https://example.com/pulse/teaching-computer-bsl-cns-rhs8e"
@@ -450,9 +527,26 @@ describe("Pulse article URLs (mocked)", () => {
     expect(response.headers.get("content-type")).toBe("application/rss+xml");
 
     const text = await response.text();
+    expect(text).toContain("<title>Articles by Chris Nesbitt-Smith</title>");
+  });
+
+  it("falls back to single-item feed when profile lookup fails", async () => {
+    globalThis.fetch = vi.fn((input) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.includes("/pulse/")) {
+        return Promise.resolve(new Response(standaloneArticleHtml));
+      }
+      // Profile returns error
+      return Promise.resolve(new Response("Forbidden", { status: 403 }));
+    });
+
+    const response = await SELF.fetch(
+      "https://example.com/pulse/teaching-computer-bsl-cns-rhs8e"
+    );
+    expect(response.status).toBe(200);
+
+    const text = await response.text();
     expect(text).toContain("<title>Teaching a Computer BSL</title>");
-    expect(text).toContain("<author>Chris Nesbitt-Smith</author>");
-    expect(text).toContain("Sign language recognition is fascinating.");
   });
 });
 
