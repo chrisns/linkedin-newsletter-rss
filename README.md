@@ -32,7 +32,8 @@ https://linkedinrss.cns.me/pulse/learning-fundamentals-beyond-slot-machine-david
 ```
 
 - If the article belongs to a newsletter, you'll be redirected to the full newsletter RSS feed.
-- If it's a standalone article, a single-item RSS feed is generated.
+- If the article is standalone, the service looks up the author's LinkedIn profile to find all their articles and generates an "Articles by {Author}" feed.
+- Falls back to a single-item feed if the author's profile can't be scraped (LinkedIn blocks some cloud IP ranges from accessing profile pages).
 
 ### Add to your RSS reader
 
