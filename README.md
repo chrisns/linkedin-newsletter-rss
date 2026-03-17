@@ -3,7 +3,7 @@
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/chrisns/linkedin-newsletter-rss)
 [![Security Scanning](https://github.com/chrisns/linkedin-newsletter-rss/actions/workflows/security.yml/badge.svg)](https://github.com/chrisns/linkedin-newsletter-rss/actions/workflows/security.yml)
 
-Scraper for public LinkedIn Newsletters and make them accessible by a RSS feed.
+Scraper for public LinkedIn Newsletters and articles, making them accessible as RSS feeds.
 
 <img src="https://pbs.twimg.com/profile_images/1661161645857710081/6WtDIesg_400x400.png" alt="linkedin" width="200"/>
 <img src="https://png.pngtree.com/png-vector/20190802/ourlarge/pngtree-funnel-icon-png-image_1650353.jpg" alt="funnel" width="200"/>
@@ -11,14 +11,45 @@ Scraper for public LinkedIn Newsletters and make them accessible by a RSS feed.
 
 ## Usage
 
-Take a newsletter such as [The AI Beat](https://www.linkedin.com/newsletters/7025619738558926848/)
+Visit [linkedinrss.cns.me](https://linkedinrss.cns.me) and paste any LinkedIn newsletter or article URL.
 
-Notice the URL looks something like: `https://www.linkedin.com/newsletters/7025619738558926848/`
+### Newsletter feeds
 
-The last bit (`7025619738558926848`) is the newsletter ID.
+Take a newsletter such as [The AI Beat](https://www.linkedin.com/newsletters/7025619738558926848/) and use the slug or ID:
 
-Giving you an address like [`https://linkedinrss.cns.me/7025619738558926848`](https://linkedinrss.cns.me/7025619738558926848)
+```
+https://linkedinrss.cns.me/7025619738558926848
+```
 
-Put that into your favorite RSS reader and make yourself a coffee ☕ all your LinkedIn newsletters will be available in your RSS feed now!
+Full newsletter URLs with the name also work: `https://linkedinrss.cns.me/the-ai-beat-7140498537498816512`
 
-## You can of course deploy this to your own Cloudflare worker config.
+### Article URLs
+
+You can also paste a LinkedIn article (pulse) URL:
+
+```
+https://linkedinrss.cns.me/pulse/learning-fundamentals-beyond-slot-machine-david-knott-shrnc
+```
+
+- If the article belongs to a newsletter, you'll be redirected to the full newsletter RSS feed.
+- If it's a standalone article, a single-item RSS feed is generated.
+
+### Add to your RSS reader
+
+Put the feed URL into your favourite RSS reader and you're done.
+
+## Self hosting
+
+You can deploy this to your own Cloudflare Worker:
+
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/chrisns/linkedin-newsletter-rss)
+
+### Development
+
+```bash
+npm install
+npx wrangler dev     # local dev server
+npm test             # run tests
+```
+
+Requires Node.js 24+. Tests use [Vitest](https://vitest.dev/) with [@cloudflare/vitest-pool-workers](https://developers.cloudflare.com/workers/testing/vitest-integration/).
