@@ -14,7 +14,7 @@
     "xml": "^1.0.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.14.0",
+    "@cloudflare/vitest-pool-workers": "^0.15.0",
     "vitest": "^4.1.0",
     "wrangler": "^4.0.0"
   }
