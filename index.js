@@ -74,7 +74,11 @@ export function cleanHtml(html, origin) {
     $el.attr("controls", "");
     $el.attr("preload", "metadata");
     $el.attr("playsinline", "");
-    if (poster) $el.attr("poster", poster);
+    if (poster && origin) {
+      $el.attr("poster", rewriteImageUrl(poster, origin));
+    } else if (poster) {
+      $el.attr("poster", poster);
+    }
     $el.removeAttr("data-sources");
     $el.removeAttr("data-poster-url");
     // Sort high bitrate first so browsers pick the best by default.
