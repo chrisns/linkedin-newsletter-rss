@@ -804,6 +804,16 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("media.licdn.com");
   });
 
+  it("promotes data-delayed-url to src (LinkedIn lazy loader)", () => {
+    const upstream = "https://media.licdn.com/lazy.jpg";
+    const out = cleanHtml(
+      `<img alt="x" data-delayed-url="${upstream}">`,
+      origin
+    );
+    expect(out).toContain(`src="${origin}/img/${encodeImgId(upstream)}"`);
+    expect(out).not.toContain("data-delayed-url");
+  });
+
   it("removes empty HTML comments", () => {
     const out = cleanHtml("<p>hi<!---->there<!--   --></p>", origin);
     expect(out).not.toContain("<!---->");

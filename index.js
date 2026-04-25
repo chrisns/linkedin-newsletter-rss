@@ -44,6 +44,17 @@ export function cleanHtml(html, origin) {
   if (!html) return html;
   const $ = cheerio.load(html, { decodeEntities: false }, false);
 
+  // LinkedIn ships inline article images with data-delayed-url instead of
+  // src so a JS lazy-loader can populate them. We're not running their JS,
+  // so promote data-delayed-url -> src before the rest of the pipeline.
+  $("img[data-delayed-url]").each((_, el) => {
+    const $el = $(el);
+    if (!$el.attr("src")) {
+      $el.attr("src", $el.attr("data-delayed-url"));
+    }
+    $el.removeAttr("data-delayed-url");
+  });
+
   $("*").each((_, el) => {
     if (el.type !== "tag" || !el.attribs) return;
     for (const name of Object.keys(el.attribs)) {
