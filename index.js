@@ -55,8 +55,9 @@ export function cleanHtml(html, origin) {
     }
   });
 
-  $('a[href*="linkedin.com"]').each((_, el) => {
+  $("a[href]").each((_, el) => {
     const href = $(el).attr("href");
+    if (!href || !href.includes("trk")) return;
     try {
       const u = new URL(href);
       let changed = false;

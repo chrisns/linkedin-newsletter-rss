@@ -731,6 +731,15 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("trk=");
   });
 
+  it("strips ?trk= from outbound (non-LinkedIn) URLs", () => {
+    const out = cleanHtml(
+      '<a href="https://en.wikipedia.org/wiki/Foo?trk=article-ssr">w</a>',
+      origin
+    );
+    expect(out).toContain('href="https://en.wikipedia.org/wiki/Foo"');
+    expect(out).not.toContain("trk=");
+  });
+
   it("rewrites licdn img src to image proxy", () => {
     const upstream = "https://media.licdn.com/dms/image/foo.jpg";
     const out = cleanHtml(`<img src="${upstream}">`, origin);
