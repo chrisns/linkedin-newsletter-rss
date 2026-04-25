@@ -2,6 +2,99 @@ import * as cheerio from "cheerio";
 import xml from "xml";
 
 const BROWSER_UA = "Mozilla/5.0 (compatible)";
+const PAGE_SIZE = 5;
+
+/**
+ * base64url encode/decode for stateless image proxy IDs.
+ */
+export function encodeImgId(url) {
+  return btoa(url).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function decodeImgId(id) {
+  let s = id.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return atob(s);
+}
+
+function rewriteImageUrl(url, origin) {
+  if (!url) return url;
+  if (!/(^|\.)licdn\.com\//.test(url)) return url;
+  return `${origin}/img/${encodeImgId(url)}`;
+}
+
+/**
+ * Clean LinkedIn-flavoured HTML: strip tracking attrs, unwrap redirect
+ * links, drop ?trk= params, rewrite images through the proxy, and
+ * remove empty HTML comments.
+ */
+export function cleanHtml(html, origin) {
+  if (!html) return html;
+  const $ = cheerio.load(html, { decodeEntities: false }, false);
+
+  $("*").each((_, el) => {
+    if (el.type !== "tag" || !el.attribs) return;
+    for (const name of Object.keys(el.attribs)) {
+      if (
+        name === "class" ||
+        name.startsWith("data-tracking") ||
+        name.startsWith("data-test")
+      ) {
+        delete el.attribs[name];
+      }
+    }
+  });
+
+  $('a[href*="linkedin.com/redir/redirect"]').each((_, el) => {
+    const href = $(el).attr("href");
+    try {
+      const target = new URL(href).searchParams.get("url");
+      if (target) $(el).attr("href", target);
+    } catch {
+      /* ignore malformed */
+    }
+  });
+
+  $('a[href*="linkedin.com"]').each((_, el) => {
+    const href = $(el).attr("href");
+    try {
+      const u = new URL(href);
+      let changed = false;
+      for (const k of [...u.searchParams.keys()]) {
+        if (k === "trk" || k.startsWith("trk")) {
+          u.searchParams.delete(k);
+          changed = true;
+        }
+      }
+      if (changed) {
+        const search = u.searchParams.toString();
+        $(el).attr(
+          "href",
+          u.origin + u.pathname + (search ? "?" + search : "") + u.hash
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+
+  if (origin) {
+    $('img[src*="licdn.com"]').each((_, el) => {
+      const src = $(el).attr("src");
+      $(el).attr("src", rewriteImageUrl(src, origin));
+    });
+  }
+
+  return $.html().replace(/<!--\s*-->/g, "");
+}
+
+function cleanArticle(article, origin) {
+  return {
+    ...article,
+    description: cleanHtml(article.description, origin),
+    img: rewriteImageUrl(article.img, origin),
+  };
+}
 
 /**
  * Parse newsletter listing page to extract metadata and article links.
@@ -281,7 +374,7 @@ function homepageHtml() {
 </html>`;
 }
 
-async function generateFeed(newsletter, selfUrl) {
+async function generateFeed(newsletter, selfUrl, page = 1) {
   const url = `https://www.linkedin.com/newsletters/${newsletter}`;
   const response = await fetch(url);
   if (!response.ok) {
@@ -292,34 +385,73 @@ async function generateFeed(newsletter, selfUrl) {
   const html = await response.text();
   const { title, description, imageUrl, links } = parseNewsletterPage(html);
 
+  const origin = new URL(selfUrl).origin;
+  const start = (page - 1) * PAGE_SIZE;
+  const pageLinks = links.slice(start, start + PAGE_SIZE);
+
   const results = await Promise.allSettled(
-    links.map((link) => fetchAndParseArticle(link))
+    pageLinks.map((link) => fetchAndParseArticle(link))
   );
 
   const articles = results
     .filter((r) => r.status === "fulfilled")
-    .map((r) => r.value);
+    .map((r) => cleanArticle(r.value, origin));
 
   results
     .filter((r) => r.status === "rejected")
     .forEach((r) => console.error(`Article fetch failed: ${r.reason.message}`));
 
   return buildRssFeed(
-    { title, description, imageUrl, link: url },
+    {
+      title,
+      description,
+      imageUrl: rewriteImageUrl(imageUrl, origin),
+      link: url,
+    },
     articles,
     selfUrl
   );
 }
 
+async function handleImageProxy(id) {
+  let upstream;
+  try {
+    upstream = decodeImgId(id);
+    new URL(upstream);
+  } catch {
+    return new Response("Invalid image id", { status: 400 });
+  }
+  const u = new URL(upstream);
+  if (!/(^|\.)licdn\.com$/.test(u.hostname)) {
+    return new Response("Forbidden upstream", { status: 403 });
+  }
+  const upstreamRes = await fetch(upstream);
+  if (!upstreamRes.ok) {
+    return new Response("Upstream error", { status: upstreamRes.status });
+  }
+  const headers = new Headers();
+  const ct = upstreamRes.headers.get("content-type");
+  if (ct) headers.set("content-type", ct);
+  headers.set("cache-control", "public, max-age=31536000, immutable");
+  return new Response(upstreamRes.body, { headers });
+}
+
 export default {
   async fetch(request) {
     try {
-      const pathname = new URL(request.url).pathname;
+      const reqUrl = new URL(request.url);
+      const pathname = reqUrl.pathname;
+      const origin = reqUrl.origin;
 
       if (pathname === "/") {
         return new Response(homepageHtml(), {
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
+      }
+
+      // Stateless image proxy for licdn.com assets
+      if (pathname.startsWith("/img/")) {
+        return handleImageProxy(pathname.substring("/img/".length));
       }
 
       let slug = pathname.substring(1);
@@ -343,8 +475,7 @@ export default {
         // If article belongs to a newsletter, redirect to the full feed
         const newsletterSlug = findParentNewsletter(articleHtml);
         if (newsletterSlug) {
-          const base = new URL(request.url);
-          return Response.redirect(`${base.origin}/${newsletterSlug}`, 302);
+          return Response.redirect(`${origin}/${newsletterSlug}`, 302);
         }
 
         // Standalone article - try to find more articles by the same author
@@ -363,7 +494,7 @@ export default {
               );
               const articles = results
                 .filter((r) => r.status === "fulfilled")
-                .map((r) => r.value);
+                .map((r) => cleanArticle(r.value, origin));
               results
                 .filter((r) => r.status === "rejected")
                 .forEach((r) =>
@@ -392,7 +523,10 @@ export default {
         }
 
         // Fallback: single-item feed from just this article
-        const article = { ...parseArticlePage(articleHtml), link: articleUrl };
+        const article = cleanArticle(
+          { ...parseArticlePage(articleHtml), link: articleUrl },
+          origin
+        );
         const metadata = {
           title: article.title,
           description: article.title,
@@ -405,7 +539,9 @@ export default {
         });
       }
 
-      const xmlContent = await generateFeed(slug, request.url);
+      const pageParam = parseInt(reqUrl.searchParams.get("page") || "1", 10);
+      const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+      const xmlContent = await generateFeed(slug, request.url, page);
       return new Response(xmlContent, {
         headers: { "Content-Type": "application/rss+xml" },
       });

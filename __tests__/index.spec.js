@@ -8,6 +8,9 @@ import {
   findParentNewsletter,
   findAuthorProfile,
   parseProfileArticles,
+  cleanHtml,
+  encodeImgId,
+  decodeImgId,
 } from "../index.js";
 
 // --- Fixtures ---
@@ -547,6 +550,204 @@ describe("Pulse article URLs (mocked)", () => {
 
     const text = await response.text();
     expect(text).toContain("<title>Teaching a Computer BSL</title>");
+  });
+});
+
+// --- Pagination ---
+
+describe("Pagination", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function manyArticlesNewsletterHtml(n) {
+    const items = Array.from({ length: n }, (_, i) => i + 1)
+      .map(
+        (i) =>
+          `<div class="share-article"><a href="https://www.linkedin.com/pulse/issue-${i}">Issue ${i}</a></div>`
+      )
+      .join("\n");
+    return `<!DOCTYPE html><html><head>
+      <meta property="og:description" content="Many issues">
+      <meta property="og:image" content="https://example.com/img.jpg">
+    </head><body>
+      <h1>Many Issues</h1>
+      <section class="newsletter__editions-container"><ul class="newsletter__updates">
+        ${items}
+      </ul></section>
+    </body></html>`;
+  }
+
+  function pulsePage(slug) {
+    return `<!DOCTYPE html><html><head>
+      <script type="application/ld+json">{
+        "name": "${slug}",
+        "datePublished": "2026-01-01T00:00:00.000Z",
+        "author": {"name": "Test"},
+        "image": {"url": "https://media.licdn.com/${slug}.jpg"}
+      }</script>
+    </head><body>
+      <h1>${slug}</h1>
+      <div data-test-id="article-content-blocks">
+        <div class="article-main__content"><p>${slug}</p></div>
+      </div>
+    </body></html>`;
+  }
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn((input) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.includes("/newsletters/many")) {
+        return Promise.resolve(new Response(manyArticlesNewsletterHtml(12)));
+      }
+      const m = url.match(/\/pulse\/(issue-\d+)/);
+      if (m) return Promise.resolve(new Response(pulsePage(m[1])));
+      return Promise.resolve(new Response("Not Found", { status: 404 }));
+    });
+  });
+
+  it("page 1 returns the first 5 items", async () => {
+    const response = await SELF.fetch("https://example.com/many?page=1");
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("<title>issue-1</title>");
+    expect(text).toContain("<title>issue-5</title>");
+    expect(text).not.toContain("<title>issue-6</title>");
+  });
+
+  it("page 2 returns items 6-10", async () => {
+    const response = await SELF.fetch("https://example.com/many?page=2");
+    const text = await response.text();
+    expect(text).toContain("<title>issue-6</title>");
+    expect(text).toContain("<title>issue-10</title>");
+    expect(text).not.toContain("<title>issue-1</title>");
+    expect(text).not.toContain("<title>issue-11</title>");
+  });
+
+  it("page 3 returns the last 2 items", async () => {
+    const response = await SELF.fetch("https://example.com/many?page=3");
+    const text = await response.text();
+    expect(text).toContain("<title>issue-11</title>");
+    expect(text).toContain("<title>issue-12</title>");
+    expect(text).not.toContain("<title>issue-10</title>");
+  });
+
+  it("page past the end returns a well-formed empty feed", async () => {
+    const response = await SELF.fetch("https://example.com/many?page=4");
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("<title>Many Issues</title>");
+    expect(text).not.toContain("<item>");
+  });
+
+  it("no page param keeps back-compat (treated as page 1)", async () => {
+    const response = await SELF.fetch("https://example.com/many");
+    const text = await response.text();
+    expect(text).toContain("<title>issue-1</title>");
+    expect(text).not.toContain("<title>issue-6</title>");
+  });
+});
+
+// --- Image proxy ---
+
+describe("Image proxy", () => {
+  it("encode/decode are inverses", () => {
+    const url = "https://media.licdn.com/dms/image/foo/bar?q=1&x=2";
+    expect(decodeImgId(encodeImgId(url))).toBe(url);
+  });
+
+  it("returns 400 for malformed id", async () => {
+    const response = await SELF.fetch("https://example.com/img/!!!not-base64");
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 403 for non-licdn upstream", async () => {
+    const id = encodeImgId("https://evil.example.com/foo.jpg");
+    const response = await SELF.fetch(`https://example.com/img/${id}`);
+    expect(response.status).toBe(403);
+  });
+
+  it("proxies licdn upstream with long cache header", async () => {
+    const upstream = "https://media.licdn.com/test.jpg";
+    const id = encodeImgId(upstream);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response("imagebytes", {
+          headers: { "content-type": "image/jpeg" },
+        })
+      )
+    );
+    try {
+      const response = await SELF.fetch(`https://example.com/img/${id}`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/jpeg");
+      expect(response.headers.get("cache-control")).toContain("max-age=31536000");
+      expect(response.headers.get("cache-control")).toContain("immutable");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// --- HTML cleanup ---
+
+describe("cleanHtml", () => {
+  const origin = "https://linkedinrss.cns.me";
+
+  it("strips data-tracking-* and data-test-* attributes", () => {
+    const out = cleanHtml(
+      '<p data-tracking-control-name="x" data-test-id="y" data-keep="ok">hi</p>',
+      origin
+    );
+    expect(out).not.toContain("data-tracking-control-name");
+    expect(out).not.toContain("data-test-id");
+    expect(out).toContain('data-keep="ok"');
+  });
+
+  it("removes class attributes", () => {
+    const out = cleanHtml('<p class="font-[700]">hi</p>', origin);
+    expect(out).not.toContain("class=");
+    expect(out).toContain("hi");
+  });
+
+  it("unwraps LinkedIn redirect links", () => {
+    const out = cleanHtml(
+      '<a href="https://www.linkedin.com/redir/redirect?url=https%3A%2F%2Fexample.com%2Fa%3Fb%3D1&urlhash=xyz&trk=foo">link</a>',
+      origin
+    );
+    expect(out).toContain('href="https://example.com/a?b=1"');
+    expect(out).not.toContain("redir/redirect");
+  });
+
+  it("strips ?trk= from LinkedIn URLs", () => {
+    const out = cleanHtml(
+      '<a href="https://www.linkedin.com/in/cnesbittsmith?trk=article-ssr-frontend-pulse_little-text-block">x</a>',
+      origin
+    );
+    expect(out).toContain('href="https://www.linkedin.com/in/cnesbittsmith"');
+    expect(out).not.toContain("trk=");
+  });
+
+  it("rewrites licdn img src to image proxy", () => {
+    const upstream = "https://media.licdn.com/dms/image/foo.jpg";
+    const out = cleanHtml(`<img src="${upstream}">`, origin);
+    expect(out).toContain(`${origin}/img/${encodeImgId(upstream)}`);
+    expect(out).not.toContain("media.licdn.com");
+  });
+
+  it("removes empty HTML comments", () => {
+    const out = cleanHtml("<p>hi<!---->there<!--   --></p>", origin);
+    expect(out).not.toContain("<!---->");
+    expect(out).not.toContain("<!--   -->");
+    expect(out).toContain("hithere");
+  });
+
+  it("returns empty input unchanged", () => {
+    expect(cleanHtml("", origin)).toBe("");
+    expect(cleanHtml(null, origin)).toBe(null);
   });
 });
 
