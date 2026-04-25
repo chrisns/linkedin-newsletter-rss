@@ -491,6 +491,39 @@ export default {
         return handleImageProxy(pathname.substring("/img/".length));
       }
 
+      // Single-article JSON, no redirect-to-newsletter behaviour. Used by
+      // archival consumers that already know the article slug and just want
+      // the cleaned body, image, etc.
+      if (pathname.startsWith("/article/")) {
+        const slug = pathname.substring("/article/".length);
+        if (!slug) {
+          return new Response("Missing slug", { status: 400 });
+        }
+        const articleUrl = `https://www.linkedin.com/pulse/${slug}`;
+        const articleResponse = await fetch(articleUrl);
+        if (!articleResponse.ok) {
+          return new Response(
+            `LinkedIn returned ${articleResponse.status}`,
+            { status: articleResponse.status }
+          );
+        }
+        const articleHtml = await articleResponse.text();
+        const article = cleanArticle(
+          {
+            ...parseArticlePage(articleHtml),
+            parentNewsletter: findParentNewsletter(articleHtml),
+            link: articleUrl,
+          },
+          origin
+        );
+        return new Response(JSON.stringify(article), {
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "public, max-age=300",
+          },
+        });
+      }
+
       let slug = pathname.substring(1);
       if (!slug) {
         return new Response("Please provide a newsletter ID in the URL path", {

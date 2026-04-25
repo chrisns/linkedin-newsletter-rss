@@ -845,6 +845,44 @@ describe("stripTrk", () => {
   });
 });
 
+// --- /article/<slug> JSON ---
+
+describe("Article JSON endpoint", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("returns cleaned single-article JSON", async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response(articlePageHtml))
+    );
+    const response = await SELF.fetch(
+      "https://example.com/article/the-future-of-ai-john-doe-abc123"
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    const body = await response.json();
+    expect(body.title).toBe("The Future of AI in 2026");
+    expect(body.author).toBe("John Doe");
+    expect(body.link).toContain("/pulse/the-future-of-ai-john-doe-abc123");
+    expect(body.description).toContain("AI is transforming the world.");
+  });
+
+  it("propagates upstream non-200 status", async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response("nope", { status: 404 }))
+    );
+    const response = await SELF.fetch("https://example.com/article/missing");
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 400 with no slug", async () => {
+    const response = await SELF.fetch("https://example.com/article/");
+    expect(response.status).toBe(400);
+  });
+});
+
 // --- Live integration test ---
 
 describe("Integration (live)", () => {
