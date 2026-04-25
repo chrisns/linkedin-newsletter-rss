@@ -107,28 +107,26 @@ export function parseNewsletterPage(html) {
     $("img.newsletter-image").attr("data-delayed-url") ||
     "";
 
-  // Primary selectors
-  let links = [];
-  const articles = $(
-    "section.newsletter__editions-container ul.newsletter__updates div.share-article"
-  );
-  if (articles.length > 0) {
-    articles.each((_, item) => {
-      const href = $(item).find("a").attr("href");
-      if (href) links.push(href.split("?")[0]);
-    });
-  }
+  // Collect from the primary issues list first (preserves newest-first order)
+  // then merge in any other pulse links on the page (e.g. the right-rail
+  // "more articles" list contains older issues LinkedIn collapsed out of the
+  // main list).
+  const links = [];
+  const seen = new Set();
+  const push = (raw) => {
+    if (!raw) return;
+    const clean = raw.split("?")[0];
+    if (!/^https?:\/\/[^/]+\/pulse\/[^/]+/.test(clean)) return;
+    if (clean.includes("/pulse/api/")) return;
+    if (seen.has(clean)) return;
+    seen.add(clean);
+    links.push(clean);
+  };
 
-  // Fallback: find pulse article links
-  if (links.length === 0) {
-    $('a[href*="/pulse/"]').each((_, el) => {
-      const href = $(el).attr("href");
-      if (href) {
-        const clean = href.split("?")[0];
-        if (!links.includes(clean)) links.push(clean);
-      }
-    });
-  }
+  $(
+    "section.newsletter__editions-container ul.newsletter__updates div.share-article a"
+  ).each((_, el) => push($(el).attr("href")));
+  $('a[href*="/pulse/"]').each((_, el) => push($(el).attr("href")));
 
   return { title, description, imageUrl, links };
 }
@@ -236,7 +234,25 @@ export async function fetchAndParseArticle(url) {
     throw new Error(`Failed to fetch article ${url}: ${response.status}`);
   }
   const html = await response.text();
-  return { ...parseArticlePage(html), link: url };
+  return {
+    ...parseArticlePage(html),
+    parentNewsletter: findParentNewsletter(html),
+    link: url,
+  };
+}
+
+/**
+ * Best-effort match between two newsletter identifiers. LinkedIn slugs are
+ * `kebab-name-<numeric-id>` but the request might use only the numeric id.
+ * We compare on the trailing numeric id when possible, otherwise on equality.
+ */
+export function newslettersMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const idA = String(a).match(/(\d{15,})/);
+  const idB = String(b).match(/(\d{15,})/);
+  if (idA && idB) return idA[1] === idB[1];
+  return false;
 }
 
 /**
@@ -382,18 +398,29 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
   const { title, description, imageUrl, links } = parseNewsletterPage(html);
 
   const origin = new URL(selfUrl).origin;
-  const start = (page - 1) * PAGE_SIZE;
-  const pageLinks = links.slice(start, start + PAGE_SIZE);
 
-  const results = await Promise.allSettled(
-    pageLinks.map((link) => fetchAndParseArticle(link))
+  // Fetch every candidate so we can filter to only those whose parent
+  // newsletter matches the requested one (the listing page's right-rail
+  // can sneak in articles from other newsletters by the same author).
+  const allResults = await Promise.allSettled(
+    links.map((link) => fetchAndParseArticle(link))
   );
 
-  const articles = results
+  const matched = allResults
     .filter((r) => r.status === "fulfilled")
-    .map((r) => cleanArticle(r.value, origin));
+    .map((r) => r.value)
+    .filter((a) =>
+      a.parentNewsletter
+        ? newslettersMatch(a.parentNewsletter, newsletter)
+        : true
+    );
 
-  results
+  const start = (page - 1) * PAGE_SIZE;
+  const articles = matched
+    .slice(start, start + PAGE_SIZE)
+    .map((a) => cleanArticle(a, origin));
+
+  allResults
     .filter((r) => r.status === "rejected")
     .forEach((r) => console.error(`Article fetch failed: ${r.reason.message}`));
 

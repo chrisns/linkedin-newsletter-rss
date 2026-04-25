@@ -12,6 +12,7 @@ import {
   encodeImgId,
   decodeImgId,
   stripTrk,
+  newslettersMatch,
 } from "../index.js";
 
 // --- Fixtures ---
@@ -201,6 +202,52 @@ describe("parseNewsletterPage", () => {
     const result = parseNewsletterPage(emptyNewsletterPageHtml);
     expect(result.title).toBe("Empty Newsletter");
     expect(result.links).toEqual([]);
+  });
+
+  it("merges right-rail / sidebar pulse links beyond the primary list", () => {
+    const html = `<!DOCTYPE html><html><head>
+      <meta property="og:description" content="d">
+    </head><body>
+      <h1>NL</h1>
+      <section class="newsletter__editions-container"><ul class="newsletter__updates">
+        <div class="share-article"><a href="https://www.linkedin.com/pulse/a-1">A</a></div>
+        <div class="share-article"><a href="https://www.linkedin.com/pulse/a-2">B</a></div>
+      </ul></section>
+      <section class="right-rail"><ul class="articles-content-card__articles-list">
+        <li><a href="https://www.linkedin.com/pulse/a-2?trk=foo">B-dup</a></li>
+        <li><a href="https://www.linkedin.com/pulse/a-3">C</a></li>
+        <li><a href="https://www.linkedin.com/pulse/api/ingraphs/counter">noise</a></li>
+      </ul></section>
+    </body></html>`;
+    const result = parseNewsletterPage(html);
+    expect(result.links).toEqual([
+      "https://www.linkedin.com/pulse/a-1",
+      "https://www.linkedin.com/pulse/a-2",
+      "https://www.linkedin.com/pulse/a-3",
+    ]);
+  });
+});
+
+describe("newslettersMatch", () => {
+  it("matches identical slugs", () => {
+    expect(newslettersMatch("foo-123", "foo-123")).toBe(true);
+  });
+  it("matches by trailing numeric id", () => {
+    expect(
+      newslettersMatch(
+        "cloudy-with-chance-of-freefall-7439561267528458241",
+        "7439561267528458241"
+      )
+    ).toBe(true);
+  });
+  it("rejects different ids", () => {
+    expect(newslettersMatch("a-12345678901234567", "b-99999999999999999")).toBe(
+      false
+    );
+  });
+  it("rejects null/undefined", () => {
+    expect(newslettersMatch(null, "x")).toBe(false);
+    expect(newslettersMatch("x", undefined)).toBe(false);
   });
 });
 
