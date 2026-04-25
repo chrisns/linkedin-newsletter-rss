@@ -17,6 +17,18 @@ export function decodeImgId(id) {
   return atob(s);
 }
 
+/**
+ * Strip every `trk*=…` query param from a URL string. Tolerates malformed
+ * inputs that LinkedIn occasionally emits (e.g. `#fragment?trk=…`, where
+ * `?` lands inside the fragment). Pure regex — never throws.
+ */
+export function stripTrk(href) {
+  let h = href;
+  h = h.replace(/([?&])trk[^=&]*=[^&#]*&/g, "$1");
+  h = h.replace(/[?&]trk[^=&]*=[^&#]*/g, "");
+  return h;
+}
+
 function rewriteImageUrl(url, origin) {
   if (!url) return url;
   if (!/(^|\.)licdn\.com\//.test(url)) return url;
@@ -58,25 +70,8 @@ export function cleanHtml(html, origin) {
   $("a[href]").each((_, el) => {
     const href = $(el).attr("href");
     if (!href || !href.includes("trk")) return;
-    try {
-      const u = new URL(href);
-      let changed = false;
-      for (const k of [...u.searchParams.keys()]) {
-        if (k === "trk" || k.startsWith("trk")) {
-          u.searchParams.delete(k);
-          changed = true;
-        }
-      }
-      if (changed) {
-        const search = u.searchParams.toString();
-        $(el).attr(
-          "href",
-          u.origin + u.pathname + (search ? "?" + search : "") + u.hash
-        );
-      }
-    } catch {
-      /* ignore */
-    }
+    const cleaned = stripTrk(href);
+    if (cleaned !== href) $(el).attr("href", cleaned);
   });
 
   if (origin) {

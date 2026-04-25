@@ -11,6 +11,7 @@ import {
   cleanHtml,
   encodeImgId,
   decodeImgId,
+  stripTrk,
 } from "../index.js";
 
 // --- Fixtures ---
@@ -740,6 +741,15 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("trk=");
   });
 
+  it("strips ?trk= even when after a URL fragment (malformed)", () => {
+    const out = cleanHtml(
+      '<a href="https://en.wikipedia.org/wiki/Foo#Bar?trk=x">w</a>',
+      origin
+    );
+    expect(out).toContain('href="https://en.wikipedia.org/wiki/Foo#Bar"');
+    expect(out).not.toContain("trk=");
+  });
+
   it("rewrites licdn img src to image proxy", () => {
     const upstream = "https://media.licdn.com/dms/image/foo.jpg";
     const out = cleanHtml(`<img src="${upstream}">`, origin);
@@ -757,6 +767,24 @@ describe("cleanHtml", () => {
   it("returns empty input unchanged", () => {
     expect(cleanHtml("", origin)).toBe("");
     expect(cleanHtml(null, origin)).toBe(null);
+  });
+});
+
+describe("stripTrk", () => {
+  it("removes lone trk= query", () => {
+    expect(stripTrk("https://x/y?trk=foo")).toBe("https://x/y");
+  });
+  it("removes trk= when followed by other params", () => {
+    expect(stripTrk("https://x/y?trk=foo&bar=1")).toBe("https://x/y?bar=1");
+  });
+  it("removes trk= when preceded by other params", () => {
+    expect(stripTrk("https://x/y?bar=1&trk=foo")).toBe("https://x/y?bar=1");
+  });
+  it("removes trk= even after a fragment", () => {
+    expect(stripTrk("https://x/y#sec?trk=foo")).toBe("https://x/y#sec");
+  });
+  it("leaves URLs without trk untouched", () => {
+    expect(stripTrk("https://x/y?z=1")).toBe("https://x/y?z=1");
   });
 });
 
