@@ -269,6 +269,24 @@ describe("parseArticlePage", () => {
     expect(result.img).toBe("https://media.licdn.com/fallback-cover.jpg");
     expect(result.description).toContain("Cloud native is the future.");
   });
+
+  it("extracts cover image caption when present", () => {
+    const html = `<!DOCTYPE html><html><body>
+      <h1>Test</h1>
+      <figure class="cover-img">
+        <img class="cover-img__image" src="https://media.licdn.com/x.jpg">
+        <figcaption class="cover-img__caption">A test caption — indeed</figcaption>
+      </figure>
+      <div class="article-main__content"><p>body</p></div>
+    </body></html>`;
+    const r = parseArticlePage(html);
+    expect(r.imgCaption).toBe("A test caption — indeed");
+  });
+
+  it("returns null imgCaption when there's no cover caption", () => {
+    const r = parseArticlePage(articlePageHtmlNoJsonLd);
+    expect(r.imgCaption).toBeNull();
+  });
 });
 
 describe("findParentNewsletter", () => {

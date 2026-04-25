@@ -317,6 +317,9 @@ export function buildRssFeed(metadata, articles, selfUrl) {
                 { guid: article.link },
                 { pubDate: article.pubDate },
                 { description: { _cdata: article.description } },
+                ...(article.imgCaption
+                  ? [{ imgCaption: article.imgCaption }]
+                  : []),
                 {
                   enclosure: {
                     _attr: {
