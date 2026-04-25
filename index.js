@@ -223,13 +223,16 @@ export function parseArticlePage(html) {
   const author =
     jsonLdData.author?.name || $(".publisher-author-card h3").text().trim();
 
+  // The text paragraphs and the inline image blocks live as sibling
+  // children inside `article-content-blocks`, so iterating only
+  // `.article-main__content` would skip the images entirely. Take the
+  // whole container, minus LinkedIn's auto-recommended-articles widget.
   let description = "";
-  $('div[data-test-id="article-content-blocks"] .article-main__content').each(
-    (_, el) => {
-      description += $(el).html();
-    }
-  );
-  if (!description) {
+  const root = $('div[data-test-id="article-content-blocks"]').first();
+  if (root.length) {
+    root.find(".inline-articles").remove();
+    description = root.html() || "";
+  } else {
     description = $(".article-main__content").html() || "";
   }
 
