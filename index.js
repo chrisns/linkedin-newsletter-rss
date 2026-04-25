@@ -213,6 +213,7 @@ export function parseArticlePage(html) {
 
   const img =
     jsonLdData.image?.url || $("img.cover-img__image").attr("src") || "";
+  const imgCaption = $("figcaption.cover-img__caption").text().trim() || null;
   const title = jsonLdData.name || $("h1").text().trim();
 
   let pubDate = "";
@@ -236,7 +237,7 @@ export function parseArticlePage(html) {
     description = $(".article-main__content").html() || "";
   }
 
-  return { title, author, img, pubDate, description };
+  return { title, author, img, imgCaption, pubDate, description };
 }
 
 /**
