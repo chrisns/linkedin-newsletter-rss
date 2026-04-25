@@ -55,6 +55,38 @@ export function cleanHtml(html, origin) {
     $el.removeAttr("data-delayed-url");
   });
 
+  // LinkedIn videos: the player is wired up at runtime by their JS,
+  // which reads `data-sources` (a JSON array of {type, src, bitrate})
+  // and `data-poster-url`, then injects <source> children. Without the
+  // script, the <video> element is empty and never plays. Materialise
+  // sources + poster as plain HTML so the browser can play them.
+  $("video[data-sources]").each((_, el) => {
+    const $el = $(el);
+    let sources = [];
+    try {
+      sources = JSON.parse($el.attr("data-sources"));
+    } catch {
+      /* leave as-is if malformed */
+    }
+    if (!Array.isArray(sources) || sources.length === 0) return;
+    const poster = $el.attr("data-poster-url");
+    $el.empty();
+    $el.attr("controls", "");
+    $el.attr("preload", "metadata");
+    $el.attr("playsinline", "");
+    if (poster) $el.attr("poster", poster);
+    $el.removeAttr("data-sources");
+    $el.removeAttr("data-poster-url");
+    // Sort high bitrate first so browsers pick the best by default.
+    sources.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+    for (const s of sources) {
+      if (!s || !s.src) continue;
+      const src = String(s.src);
+      const type = String(s.type || "video/mp4");
+      $el.append(`<source src="${src.replace(/"/g, "&quot;")}" type="${type}">`);
+    }
+  });
+
   $("*").each((_, el) => {
     if (el.type !== "tag" || !el.attribs) return;
     for (const name of Object.keys(el.attribs)) {
