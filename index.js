@@ -412,29 +412,28 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
   const { title, description, imageUrl, links } = parseNewsletterPage(html);
 
   const origin = new URL(selfUrl).origin;
+  const start = (page - 1) * PAGE_SIZE;
+  const pageLinks = links.slice(start, start + PAGE_SIZE);
 
-  // Fetch every candidate so we can filter to only those whose parent
-  // newsletter matches the requested one (the listing page's right-rail
-  // can sneak in articles from other newsletters by the same author).
-  const allResults = await Promise.allSettled(
-    links.map((link) => fetchAndParseArticle(link))
-  );
+  // Empty page: skip the LinkedIn round-trips entirely. Lets consumers
+  // safely loop until they hit zero items without DoSing the upstream.
+  const results = pageLinks.length
+    ? await Promise.allSettled(
+        pageLinks.map((link) => fetchAndParseArticle(link))
+      )
+    : [];
 
-  const matched = allResults
+  const articles = results
     .filter((r) => r.status === "fulfilled")
     .map((r) => r.value)
     .filter((a) =>
       a.parentNewsletter
         ? newslettersMatch(a.parentNewsletter, newsletter)
         : true
-    );
-
-  const start = (page - 1) * PAGE_SIZE;
-  const articles = matched
-    .slice(start, start + PAGE_SIZE)
+    )
     .map((a) => cleanArticle(a, origin));
 
-  allResults
+  results
     .filter((r) => r.status === "rejected")
     .forEach((r) => console.error(`Article fetch failed: ${r.reason.message}`));
 
