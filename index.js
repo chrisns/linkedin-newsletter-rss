@@ -498,7 +498,7 @@ async function handleImageProxy(id) {
     return new Response("Invalid image id", { status: 400 });
   }
   const u = new URL(upstream);
-  if (!/(^|\.)licdn\.com$/.test(u.hostname)) {
+  if (!/^([a-z0-9-]+\.)?licdn\.com$/.test(u.hostname)) {
     return new Response("Forbidden upstream", { status: 403 });
   }
   const upstreamRes = await fetch(upstream);
