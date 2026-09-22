@@ -785,6 +785,20 @@ describe("Image proxy", () => {
 // --- HTML cleanup ---
 
 describe("cleanHtml", () => {
+  it("removes an empty comment without touching text that looks like one", async () => {
+    const out = await cleanHtml(
+      "<p>a</p><!-- --><p>the literal &lt;!-- is text</p>",
+      "https://x.dev"
+    );
+    expect(out).not.toContain("<!-- -->");
+    expect(out).toContain("&lt;!--");
+  });
+
+  it("keeps a comment that has content", async () => {
+    const out = await cleanHtml("<p>a</p><!-- keep me -->", "https://x.dev");
+    expect(out).toContain("<!-- keep me -->");
+  });
+
   const origin = "https://linkedinrss.cns.me";
 
   it("strips data-tracking-* and data-test-* attributes", async () => {
@@ -884,6 +898,30 @@ describe("stripTrk", () => {
   });
   it("leaves URLs without trk untouched", async () => {
     expect(stripTrk("https://x/y?z=1")).toBe("https://x/y?z=1");
+  });
+
+  it("removes several trk params at once", async () => {
+    expect(stripTrk("https://x/y?a=1&trk=b&c=2&trkQid=d&e=3")).toBe(
+      "https://x/y?a=1&c=2&e=3"
+    );
+  });
+
+  it("promotes the next param when trk was first", async () => {
+    expect(stripTrk("https://x/y?trk=a&b=1&c=2")).toBe("https://x/y?b=1&c=2");
+  });
+
+  it("keeps a value containing an equals sign", async () => {
+    expect(stripTrk("https://x/y?trk=a&q=b=c")).toBe("https://x/y?q=b=c");
+  });
+
+  it("does not backtrack on a crafted href", async () => {
+    // The previous regex was polynomial: the name and the value were adjacent
+    // unbounded classes. Anyone can publish a LinkedIn article with a crafted
+    // link, and the CPU budget is 10ms.
+    const hostile = "&trk" + "?trk".repeat(20000);
+    const started = Date.now();
+    stripTrk(hostile);
+    expect(Date.now() - started).toBeLessThan(200);
   });
 });
 

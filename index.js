@@ -425,24 +425,8 @@ export default {
       // upstream failure cannot be told apart from a typo. Say both, and use
       // 502: a feed reader retries that, where a 404 would make it give up on
       // a feed that is only briefly unavailable.
-      if (/\b(40[34]|410)\b/.test(error.message)) {
-        return htmlResponse(
-          errorHtml(
-            404,
-            "No newsletter <em>there</em>",
-            "LinkedIn has no public newsletter or article at that address. Check the URL, then try again."
-          ),
-          404
-        );
-      }
-      return htmlResponse(
-        errorHtml(
-          502,
-          "That did not <em>work</em>",
-          "LinkedIn did not give us a page we could read. Either that newsletter does not exist, or LinkedIn is having trouble. Check the address, then try again in a minute."
-        ),
-        502
-      );
+      const status = /\b(40[34]|410)\b/.test(error.message) ? 404 : 502;
+      return htmlResponse(errorHtml(status), status);
     }
   },
 

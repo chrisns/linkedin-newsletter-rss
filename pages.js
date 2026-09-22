@@ -248,10 +248,33 @@ ${popularSection(popular)}`;
 }
 
 /**
- * A styled error page. The message is written here, never taken from a thrown
- * error, so internals are not shown to the reader.
+ * The error pages, written out in full here.
+ *
+ * Keyed rather than parameterised so the copy cannot come from a thrown error:
+ * a message can name an upstream URL or a parser internal, and the reader has
+ * no use for either. `plain` is a separate hand-written line for the meta
+ * description, because stripping tags out of `message` with a regex is not a
+ * reliable way to get text.
  */
-export function errorHtml(status, heading, message) {
+const ERRORS = {
+  404: {
+    heading: "No newsletter <em>there</em>",
+    message:
+      "LinkedIn has no public newsletter or article at that address. Check the URL, then try again.",
+    plain:
+      "LinkedIn has no public newsletter or article at that address.",
+  },
+  502: {
+    heading: "That did not <em>work</em>",
+    message:
+      "LinkedIn did not give us a page we could read. Either that newsletter does not exist, or LinkedIn is having trouble. Check the address, then try again in a minute.",
+    plain:
+      "LinkedIn did not give us a page we could read. Try again in a minute.",
+  },
+};
+
+export function errorHtml(status) {
+  const { heading, message, plain } = ERRORS[status] || ERRORS[502];
   const body = `<section class="hero">
   <div class="hero-body">
     <span class="eyebrow on-paper">&#167; Error &mdash; ${status}</span>
@@ -262,7 +285,7 @@ export function errorHtml(status, heading, message) {
 </section>`;
   return shell({
     title: `${status} — LinkedIn Newsletter to RSS`,
-    description: message.replace(/<[^>]+>/g, ""),
+    description: plain,
     body,
   });
 }

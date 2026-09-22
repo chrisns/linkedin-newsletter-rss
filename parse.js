@@ -99,15 +99,56 @@ export function decodeImgId(id) {
 }
 
 /**
- * Strip every `trk*=…` query param from a URL string. Tolerates malformed
- * inputs that LinkedIn occasionally emits (e.g. `#fragment?trk=…`, where
- * `?` lands inside the fragment). Pure regex — never throws.
+ * Strip every `trk*=…` parameter from a URL string. Tolerates the malformed
+ * input LinkedIn occasionally emits, such as `#fragment?trk=…`, where the `?`
+ * lands inside the fragment. Never throws.
+ *
+ * Written as a single left-to-right scan rather than a regex. The regex this
+ * replaces was polynomial: the parameter name and its value were adjacent
+ * unbounded character classes, so a crafted href could make the engine
+ * backtrack. Anyone can publish a LinkedIn article containing a crafted link,
+ * and the CPU budget here is 10ms.
  */
 export function stripTrk(href) {
-  let h = href;
-  h = h.replace(/([?&])trk[^=&]*=[^&#]*&/g, "$1");
-  h = h.replace(/[?&]trk[^=&]*=[^&#]*/g, "");
-  return h;
+  if (!href || !href.includes("trk")) return href;
+
+  // The first `?` or `&` begins the parameters, wherever it falls.
+  let cut = href.length;
+  for (let i = 0; i < href.length; i++) {
+    if (href[i] === "?" || href[i] === "&") {
+      cut = i;
+      break;
+    }
+  }
+  if (cut === href.length) return href;
+
+  const base = href.slice(0, cut);
+  const rest = href.slice(cut);
+
+  // Each parameter is `<delimiter><name>=<value>`, ending at the next
+  // delimiter or at a `#`. Walk them once and keep the ones we want.
+  const kept = [];
+  let i = 0;
+  while (i < rest.length) {
+    const delimiter = rest[i];
+    let end = i + 1;
+    while (end < rest.length && rest[end] !== "?" && rest[end] !== "&") end++;
+    const param = rest.slice(i + 1, end);
+    const hash = param.indexOf("#");
+    if (hash >= 0) {
+      // A fragment starts mid-parameter. Keep everything from the `#` on.
+      const before = param.slice(0, hash);
+      if (!before.startsWith("trk")) kept.push(delimiter + before);
+      kept.push(param.slice(hash));
+    } else if (!param.startsWith("trk")) {
+      kept.push(delimiter + param);
+    }
+    i = end;
+  }
+
+  const out = kept.join("");
+  // A surviving parameter must not open with `&`, because it is now first.
+  return base + (out.startsWith("&") ? "?" + out.slice(1) : out);
 }
 
 export function rewriteImageUrl(url, origin) {
@@ -292,10 +333,18 @@ function withCleaningRules(rewriter, origin) {
  */
 export async function cleanHtml(html, origin) {
   if (!html) return html;
-  const out = await withCleaningRules(new HTMLRewriter(), origin)
+  return withCleaningRules(new HTMLRewriter(), origin)
+    // LinkedIn leaves empty comments where its framework removed a node.
+    // Dropped through the parser rather than by a regex over the output: a
+    // regex here cannot tell a real comment from the same characters sitting
+    // inside a text node or an attribute.
+    .onDocument({
+      comments(comment) {
+        if (comment.text.trim() === "") comment.remove();
+      },
+    })
     .transform(new Response(html))
     .text();
-  return out.replace(/<!--\s*-->/g, "");
 }
 
 /**
