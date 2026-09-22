@@ -142,3 +142,56 @@ describe("Homepage caching", () => {
     expect(second.status).toBe(304);
   });
 });
+
+describe("Non-ASCII feed titles", () => {
+  it("does not put raw UTF-8 bytes in the header", async () => {
+    nonce = `accent-${Date.now()}`;
+    const accented = `<!DOCTYPE html><html><head>
+      <meta property="og:description" content="d">
+    </head><body><h1>IA g&eacute;n&eacute;rative: Le AI BIG Recap</h1>
+      <a href="https://www.linkedin.com/pulse/one-${nonce}">1</a>
+    </body></html>`;
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.includes("/newsletters/")) return new Response(accented);
+      if (url.includes("/pulse/")) return new Response(article("One"));
+      return real(input);
+    });
+
+    const res = await SELF.fetch(`https://example.com/${freshSlug()}`);
+    const header = res.headers.get("x-feed-title");
+    // A header value must be ASCII. Workers warns, and a browser would throw.
+    expect(header).toMatch(/^[\x20-\x7E]*$/);
+    expect(decodeURIComponent(header)).toBe("IA générative: Le AI BIG Recap");
+    // The feed itself still carries the real characters.
+    expect(await res.text()).toContain("IA générative");
+  });
+});
+
+describe("304 responses keep the caller's headers", () => {
+  it("carries x-feed-title through, so a conditional poll is still named", async () => {
+    const url = `https://example.com/${freshSlug()}`;
+    const first = await SELF.fetch(url);
+    const title = first.headers.get("x-feed-title");
+    expect(title).toBeTruthy();
+
+    const second = await SELF.fetch(url, {
+      headers: { "if-none-match": first.headers.get("etag") },
+    });
+    expect(second.status).toBe(304);
+    // Production showed most popularity rows with an empty title, because a
+    // conditional poll dropped this header and recorded "".
+    expect(second.headers.get("x-feed-title")).toBe(title);
+  });
+
+  it("still carries the standard validators", async () => {
+    const url = `https://example.com/${freshSlug()}`;
+    const first = await SELF.fetch(url);
+    const second = await SELF.fetch(url, {
+      headers: { "if-none-match": first.headers.get("etag") },
+    });
+    expect(second.headers.get("etag")).toBe(first.headers.get("etag"));
+    expect(second.headers.get("cache-control")).toBe("public, max-age=900");
+  });
+});
