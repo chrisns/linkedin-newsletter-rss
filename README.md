@@ -15,13 +15,20 @@ Visit [linkedinrss.cns.me](https://linkedinrss.cns.me) and paste any LinkedIn ne
 
 ### Newsletter feeds
 
-Take a newsletter such as [The AI Beat](https://www.linkedin.com/newsletters/7025619738558926848/) and use the slug or ID:
+A live example. This is my own newsletter, *Cloudy with a chance of freefall*,
+served as RSS by this service:
+
+```
+https://linkedinrss.cns.me/cloudy-with-chance-of-freefall-7439561267528458241
+```
+
+Source: [Cloudy with a chance of freefall](https://www.linkedin.com/newsletters/cloudy-with-chance-of-freefall-7439561267528458241/).
+
+The numeric ID works on its own too:
 
 ```
 https://linkedinrss.cns.me/7025619738558926848
 ```
-
-Full newsletter URLs with the name also work: `https://linkedinrss.cns.me/the-ai-beat-7140498537498816512`
 
 ### Article URLs
 
@@ -51,6 +58,42 @@ You can deploy this to your own Cloudflare Worker:
 npm install
 npx wrangler dev     # local dev server
 npm test             # run tests
+npm run build:css    # regenerate styles.generated.js
 ```
 
 Requires Node.js 24+. Tests use [Vitest](https://vitest.dev/) with [@cloudflare/vitest-pool-workers](https://developers.cloudflare.com/workers/testing/vitest-integration/).
+
+## How it works
+
+### Parsing
+
+The Worker parses with [HTMLRewriter](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/),
+which runs in native code and streams. It does not build a DOM in JavaScript.
+This matters: the free plan allows 10ms of CPU per request, and a LinkedIn
+article page is about 225KB.
+
+Two details are worth knowing before you change `parse.js`.
+
+1. **Text chunks and attribute values arrive raw.** Character references are not
+   decoded, so re-emitting them is lossless. Decode explicitly when you need a
+   real value.
+2. **A content token is only valid inside its own handler.** Copy anything an
+   `onEndTag` callback needs, the tag name above all, into a local first.
+
+The article body is extracted by marking its container with sentinels and
+slicing the transformed output. Capturing it through `text` callbacks instead
+costs about 15us per chunk, and a body arrives as roughly 978 chunks.
+
+### Styling
+
+The pages use the [CNS design system](https://github.com/chrisns/design).
+`scripts/build-css.mjs` reads the tokens and the govbuy UI kit from
+`node_modules`, keeps only the rules whose selectors name a class the pages
+actually use, and writes `styles.generated.js`. The Worker inlines that.
+
+`styles.generated.js` is committed, because the deploy job installs with
+`--omit=dev` and cannot rebuild it. CI regenerates it and fails on a diff.
+
+`styles.local.css` holds the one component the design system does not have, a
+form input. Every value in it is a design token; the build fails on a raw
+colour.

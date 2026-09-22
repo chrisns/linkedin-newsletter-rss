@@ -4,16 +4,18 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "vitest run"
+    "build:css": "node scripts/build-css.mjs",
+    "test": "vitest run",
+    "pretest": "node scripts/build-css.mjs"
   },
   "author": "Chris Nesbitt-Smith",
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    
     "xml": "^1.0.1"
   },
   "devDependencies": {
+    "@chrisns/design": "github:chrisns/design",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "vitest": "^4.1.0",
     "wrangler": "^4.0.0"

@@ -14,6 +14,7 @@ import {
   stripTrk,
   newslettersMatch,
 } from "../index.js";
+import { EXAMPLE } from "../pages.js";
 
 // --- Fixtures ---
 
@@ -432,8 +433,27 @@ describe("Homepage", () => {
     const response = await SELF.fetch("https://example.com/");
     const html = await response.text();
     expect(html).toContain("<form");
-    expect(html).toContain('<input type="text"');
+    expect(html).toContain('type="text"');
     expect(html).toContain("LinkedIn Newsletter to RSS");
+  });
+
+  it("links the example newsletter feed", async () => {
+    const response = await SELF.fetch("https://example.com/");
+    const html = await response.text();
+    expect(html).toContain(`href="/${EXAMPLE.slug}"`);
+    expect(html).toContain(EXAMPLE.title);
+  });
+
+  it("applies the design system, not a hand-written stylesheet", async () => {
+    const response = await SELF.fetch("https://example.com/");
+    const html = await response.text();
+    // The brand pink and the three families come from @chrisns/design tokens.
+    expect(html).toContain("--pink:#E5197F");
+    expect(html).toContain("Fraunces");
+    expect(html).toContain("Hanken Grotesk");
+    // The font request must be a <link>, not a render-blocking @import.
+    expect(html).toContain('<link rel="stylesheet" href="https://fonts.googleapis.com');
+    expect(html).not.toContain("@import");
   });
 });
 
@@ -505,12 +525,16 @@ describe("RSS generation (mocked)", () => {
     expect(text).not.toContain("<item>");
   });
 
-  it("returns 500 when LinkedIn returns an error", async () => {
+  it("returns a styled 404 when LinkedIn has no such newsletter", async () => {
     const response = await SELF.fetch(
       "https://example.com/bad-newsletter"
     );
-    expect(response.status).toBe(500);
-    expect(await response.text()).toContain("LinkedIn returned 404");
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const html = await response.text();
+    expect(html).toContain("No newsletter");
+    // The thrown message can name an upstream URL; it must not reach the reader.
+    expect(html).not.toContain("LinkedIn returned 404");
   });
 });
 

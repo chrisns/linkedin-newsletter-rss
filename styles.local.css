@@ -1,0 +1,102 @@
+/* ============================================================
+   Site-local layer — linkedinrss.cns.me
+
+   The CNS design system has no form input, and this site is a form. These
+   rules fill that one gap and nothing else.
+
+   Every value here is a design token. No raw colours, no raw type. Changing
+   --pink in the design system still changes this file's output, which is the
+   invariant the system exists to protect. `npm run build:css` fails if a raw
+   hex colour appears below.
+
+   If an input lands in the design system, delete the .field rules and use it.
+   ============================================================ */
+
+.field {
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: var(--t-base);
+  color: var(--ink);
+  background: var(--bone);
+  border: 0;
+  padding: var(--s-3) var(--s-4);
+}
+.field::placeholder {
+  color: var(--ink-4);
+}
+.field:focus {
+  outline: var(--bw-rule) solid var(--pink);
+  outline-offset: calc(-1 * var(--bw-rule));
+}
+
+/* The .install strip is built for a <code> element. Let it hold a form. */
+.install form {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+}
+.install.is-error {
+  border-color: var(--pink-deep);
+}
+
+/* A feed URL the visitor is meant to copy, rather than a shell command. */
+.feed-url {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+  text-decoration: none;
+  padding: var(--s-3) var(--s-4);
+  flex: 1 1 0;
+  min-width: 0;
+  /* A feed URL is long and there is nothing to gain by hiding half of it
+     under the copy button. Wrap instead of scrolling. */
+  overflow-wrap: anywhere;
+  align-self: center;
+}
+.feed-url:hover {
+  color: var(--pink-deep);
+}
+
+/* Narrow screens. The kit's grids are all two and three column. */
+@media (max-width: 860px) {
+  .page {
+    padding-left: var(--s-4);
+    padding-right: var(--s-4);
+  }
+  .hero {
+    grid-template-columns: 1fr;
+    gap: var(--s-7);
+    padding: var(--s-7) 0;
+  }
+  .hero-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .layer-grid {
+    grid-template-columns: 1fr;
+  }
+  .layer {
+    border-right: 0;
+    border-bottom: var(--bw-hair) solid var(--paper-3);
+  }
+  .colophon-grid {
+    grid-template-columns: 1fr;
+    gap: var(--s-5);
+  }
+  .bar-row {
+    grid-template-columns: 1fr;
+    gap: var(--s-1);
+  }
+  .bar-val {
+    text-align: left;
+  }
+}
+
+/* The strapline crowds the wordmark on a phone, and the page title says it. */
+@media (max-width: 560px) {
+  .masthead-meta {
+    display: none;
+  }
+}

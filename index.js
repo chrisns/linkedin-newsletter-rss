@@ -1,5 +1,7 @@
 import xml from "xml";
 
+import { errorHtml, FAVICON, homepageHtml } from "./pages.js";
+
 import {
   cleanHtml,
   decodeImgId,
@@ -123,68 +125,11 @@ export function buildRssFeed(metadata, articles, selfUrl) {
   return xml(rss, { declaration: true, indent: "  " });
 }
 
-function homepageHtml() {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LinkedIn Newsletter RSS</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f5f5f5; color: #333;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    }
-    .container { max-width: 520px; width: 100%; padding: 2rem; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    p { color: #666; margin-bottom: 1.5rem; line-height: 1.5; }
-    form { display: flex; gap: 0.5rem; }
-    input {
-      flex: 1; padding: 0.75rem; border: 1px solid #ddd;
-      border-radius: 6px; font-size: 1rem;
-    }
-    input:focus { outline: none; border-color: #0a66c2; }
-    button {
-      padding: 0.75rem 1.25rem; background: #0a66c2; color: #fff;
-      border: none; border-radius: 6px; font-size: 1rem; cursor: pointer;
-    }
-    button:hover { background: #004182; }
-    .example { margin-top: 1rem; font-size: 0.85rem; color: #999; }
-    code {
-      background: #e8e8e8; padding: 0.15rem 0.35rem;
-      border-radius: 3px; font-size: 0.8rem;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>LinkedIn Newsletter to RSS</h1>
-    <p>Convert any LinkedIn newsletter into an RSS feed. Paste a newsletter URL, article URL, or slug below.</p>
-    <form id="form">
-      <input type="text" id="url" placeholder="https://www.linkedin.com/newsletters/..." required>
-      <button type="submit">Get Feed</button>
-    </form>
-    <p class="example">Accepts newsletter URLs, article URLs, or slugs</p>
-  </div>
-  <script>
-    document.getElementById("form").addEventListener("submit", function(e) {
-      e.preventDefault();
-      var input = document.getElementById("url").value.trim();
-      var match;
-      if ((match = input.match(/linkedin\\.com\\/newsletters\\/([^/?]+)/))) {
-        window.location.href = "/" + encodeURIComponent(match[1]);
-      } else if ((match = input.match(/linkedin\\.com\\/pulse\\/([^/?]+)/))) {
-        window.location.href = "/pulse/" + encodeURIComponent(match[1]);
-      } else {
-        var slug = input.replace(/^\\//, "");
-        if (slug) window.location.href = "/" + encodeURIComponent(slug);
-      }
-    });
-  </script>
-</body>
-</html>`;
+function htmlResponse(html, status = 200) {
+  return new Response(html, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
 }
 
 async function generateFeed(newsletter, selfUrl, page = 1) {
@@ -268,8 +213,17 @@ export default {
       const origin = reqUrl.origin;
 
       if (pathname === "/") {
-        return new Response(homepageHtml(), {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
+        return htmlResponse(homepageHtml());
+      }
+
+      // A pink dot, the same mark as the wordmark. Inline so it costs no
+      // storage and no second origin.
+      if (pathname === "/favicon.ico" || pathname === "/favicon.svg") {
+        return new Response(FAVICON, {
+          headers: {
+            "content-type": "image/svg+xml",
+            "cache-control": "public, max-age=604800",
+          },
         });
       }
 
@@ -403,11 +357,31 @@ export default {
         headers: { "Content-Type": "application/rss+xml" },
       });
     } catch (error) {
+      // Logged in full, shown in outline. The thrown message can name an
+      // upstream URL or a parser internal, which the reader has no use for.
       console.error("Error:", error);
-      return new Response(`Error generating RSS feed: ${error.message}`, {
-        status: 500,
-        headers: { "Content-Type": "text/plain" },
-      });
+      // LinkedIn answers 500 for a newsletter that does not exist, so an
+      // upstream failure cannot be told apart from a typo. Say both, and use
+      // 502: a feed reader retries that, where a 404 would make it give up on
+      // a feed that is only briefly unavailable.
+      if (/^LinkedIn returned 40[34]\b|^LinkedIn returned 410\b/.test(error.message)) {
+        return htmlResponse(
+          errorHtml(
+            404,
+            "No newsletter <em>there</em>",
+            "LinkedIn has no public newsletter or article at that address. Check the URL, then try again."
+          ),
+          404
+        );
+      }
+      return htmlResponse(
+        errorHtml(
+          502,
+          "That did not <em>work</em>",
+          "LinkedIn did not give us a page we could read. Either that newsletter does not exist, or LinkedIn is having trouble. Check the address, then try again in a minute."
+        ),
+        502
+      );
     }
   },
 };
