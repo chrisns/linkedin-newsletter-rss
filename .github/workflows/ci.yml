@@ -15,7 +15,12 @@ jobs:
           node-version-file: ".nvmrc"
 
       - run: npm install
+      # `pretest` regenerates styles.generated.js from @chrisns/design. The
+      # deploy job installs with --omit=dev and cannot rebuild it, so the
+      # committed file has to be the one that ships.
       - run: npm test
+      - name: Check the generated CSS is current
+        run: git diff --exit-code -- styles.generated.js
 
   deploy:
     runs-on: ubuntu-latest

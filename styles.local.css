@@ -1,0 +1,72 @@
+/* ============================================================
+   Site-local layer — linkedinrss.cns.me
+
+   Only what is genuinely specific to this one site. The form field it used to
+   carry now lives in the design system, as `.field` in the govbuy kit.
+
+   Every value here is a design token. No raw colours, no raw type. Changing
+   --pink in the design system still changes this file's output, which is the
+   invariant the system exists to protect. `npm run build:css` fails if a raw
+   hex colour appears below.
+   ============================================================ */
+
+/* A feed URL the visitor is meant to copy, rather than a shell command. The
+   kit's `.install code` sets white-space: nowrap, which is right for an install
+   line and wrong here: a feed URL is long, and hiding half of it under the copy
+   button helps nobody. */
+.feed-url {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+  text-decoration: none;
+  padding: var(--s-3) var(--s-4);
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  align-self: center;
+}
+.feed-url:hover {
+  color: var(--pink-deep);
+}
+
+/* Narrow screens. The kit's grids are all two and three column. */
+@media (max-width: 860px) {
+  .page {
+    padding-left: var(--s-4);
+    padding-right: var(--s-4);
+  }
+  .hero {
+    grid-template-columns: 1fr;
+    gap: var(--s-7);
+    padding: var(--s-7) 0;
+  }
+  .hero-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .layer-grid {
+    grid-template-columns: 1fr;
+  }
+  .layer {
+    border-right: 0;
+    border-bottom: var(--bw-hair) solid var(--paper-3);
+  }
+  .colophon-grid {
+    grid-template-columns: 1fr;
+    gap: var(--s-5);
+  }
+  .bar-row {
+    grid-template-columns: 1fr;
+    gap: var(--s-1);
+  }
+  .bar-val {
+    text-align: left;
+  }
+}
+
+/* The strapline crowds the wordmark on a phone, and the page title says it. */
+@media (max-width: 560px) {
+  .masthead-meta {
+    display: none;
+  }
+}

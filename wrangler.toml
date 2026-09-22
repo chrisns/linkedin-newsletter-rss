@@ -2,6 +2,35 @@ name = "linkedin-newsletter-rss"
 main = "index.js"
 compatibility_date = "2026-03-12"
 workers_dev = true
+# Required by the `xml` package, which pulls in Node's stream module.
 compatibility_flags = ["nodejs_compat"]
 
 route = { pattern = "linkedinrss.cns.me/*", zone_name = "cns.me" }
+
+# Where the cron warmer sends its own requests. Each one gets its own CPU
+# budget, which is the point: warming an issue costs about 3.4ms, where
+# building a whole feed from nothing costs about 38ms against a 10ms limit.
+[vars]
+SITE_URL = "https://linkedinrss.cns.me"
+
+# Popularity. The dataset needs no pre-created resource, so collection starts
+# on the next deploy. Free plan: 100,000 data points written per day.
+[[analytics_engine_datasets]]
+binding = "AE"
+dataset = "linkedinrss"
+
+# Holds the most-followed list the cron writes and the homepage reads. One key,
+# rewritten every 15 minutes: 96 writes a day against a free allowance of 1,000.
+#
+# Reading the numbers also needs two secrets, which are not in this file:
+#
+#   npx wrangler secret put CF_ACCOUNT_ID
+#   npx wrangler secret put CF_ANALYTICS_TOKEN   # Account Analytics: Read
+#
+# Without them the cron logs that it skipped, and the homepage omits the panel.
+[[kv_namespaces]]
+binding = "POPULAR"
+id = "c92dbf62758245cdbc96c293def8d3ef"
+
+[triggers]
+crons = ["*/15 * * * *"]

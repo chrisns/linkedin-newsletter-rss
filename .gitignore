@@ -1,3 +1,6 @@
 node_modules
 .wrangler
 .claude
+
+# Playwright MCP screenshots
+.playwright-mcp/

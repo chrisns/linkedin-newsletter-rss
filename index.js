@@ -1,295 +1,61 @@
-import * as cheerio from "cheerio";
 import xml from "xml";
+
+import { errorHtml, FAVICON, homepageHtml } from "./pages.js";
+import {
+  readPopular,
+  recordHit,
+  refreshPopular,
+  warmPopular,
+} from "./popular.js";
+import {
+  ARTICLE_TTL,
+  articleKey,
+  FEED_TTL,
+  fetchUpstream,
+  getJson,
+  PAGE_TTL,
+  putJson,
+  REDIRECT_TTL,
+  withCache,
+} from "./cache.js";
+
+import {
+  cleanHtml,
+  decodeImgId,
+  encodeImgId,
+  fetchAndParseArticle,
+  findAuthorProfile,
+  findParentNewsletter,
+  parseArticlePage,
+  parseNewsletterPage,
+  parseProfileArticles,
+  rewriteImageUrl,
+  stripTrk,
+} from "./parse.js";
+
+// Re-exported so consumers and tests keep a single entry point.
+export {
+  cleanHtml,
+  decodeImgId,
+  encodeImgId,
+  fetchAndParseArticle,
+  findAuthorProfile,
+  findParentNewsletter,
+  parseArticlePage,
+  parseNewsletterPage,
+  parseProfileArticles,
+  stripTrk,
+};
 
 const BROWSER_UA = "Mozilla/5.0 (compatible)";
 const PAGE_SIZE = 5;
 
 /**
- * base64url encode/decode for stateless image proxy IDs.
+ * `parseArticlePage` already cleans the body in its own pass, so only the
+ * cover image is left to rewrite.
  */
-export function encodeImgId(url) {
-  return btoa(url).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-export function decodeImgId(id) {
-  let s = id.replace(/-/g, "+").replace(/_/g, "/");
-  while (s.length % 4) s += "=";
-  return atob(s);
-}
-
-/**
- * Strip every `trk*=…` query param from a URL string. Tolerates malformed
- * inputs that LinkedIn occasionally emits (e.g. `#fragment?trk=…`, where
- * `?` lands inside the fragment). Pure regex — never throws.
- */
-export function stripTrk(href) {
-  let h = href;
-  h = h.replace(/([?&])trk[^=&]*=[^&#]*&/g, "$1");
-  h = h.replace(/[?&]trk[^=&]*=[^&#]*/g, "");
-  return h;
-}
-
-function rewriteImageUrl(url, origin) {
-  if (!url) return url;
-  if (!/(^|\.)licdn\.com\//.test(url)) return url;
-  return `${origin}/img/${encodeImgId(url)}`;
-}
-
-/**
- * Clean LinkedIn-flavoured HTML: strip tracking attrs, unwrap redirect
- * links, drop ?trk= params, rewrite images through the proxy, and
- * remove empty HTML comments.
- */
-export function cleanHtml(html, origin) {
-  if (!html) return html;
-  const $ = cheerio.load(html, { decodeEntities: false }, false);
-
-  // LinkedIn ships inline article images with data-delayed-url instead of
-  // src so a JS lazy-loader can populate them. We're not running their JS,
-  // so promote data-delayed-url -> src before the rest of the pipeline.
-  $("img[data-delayed-url]").each((_, el) => {
-    const $el = $(el);
-    if (!$el.attr("src")) {
-      $el.attr("src", $el.attr("data-delayed-url"));
-    }
-    $el.removeAttr("data-delayed-url");
-  });
-
-  // LinkedIn videos: the player is wired up at runtime by their JS,
-  // which reads `data-sources` (a JSON array of {type, src, bitrate})
-  // and `data-poster-url`, then injects <source> children. Without the
-  // script, the <video> element is empty and never plays. Materialise
-  // sources + poster as plain HTML so the browser can play them.
-  $("video[data-sources]").each((_, el) => {
-    const $el = $(el);
-    let sources = [];
-    try {
-      sources = JSON.parse($el.attr("data-sources"));
-    } catch {
-      /* leave as-is if malformed */
-    }
-    if (!Array.isArray(sources) || sources.length === 0) return;
-    const poster = $el.attr("data-poster-url");
-    $el.empty();
-    $el.attr("controls", "");
-    $el.attr("preload", "metadata");
-    $el.attr("playsinline", "");
-    if (poster && origin) {
-      $el.attr("poster", rewriteImageUrl(poster, origin));
-    } else if (poster) {
-      $el.attr("poster", poster);
-    }
-    $el.removeAttr("data-sources");
-    $el.removeAttr("data-poster-url");
-    // Sort high bitrate first so browsers pick the best by default.
-    sources.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-    for (const s of sources) {
-      if (!s || !s.src) continue;
-      const src = String(s.src);
-      const type = String(s.type || "video/mp4");
-      $el.append(`<source src="${src.replace(/"/g, "&quot;")}" type="${type}">`);
-    }
-  });
-
-  $("*").each((_, el) => {
-    if (el.type !== "tag" || !el.attribs) return;
-    for (const name of Object.keys(el.attribs)) {
-      if (
-        name === "class" ||
-        name.startsWith("data-tracking") ||
-        name.startsWith("data-test")
-      ) {
-        delete el.attribs[name];
-      }
-    }
-  });
-
-  $('a[href*="linkedin.com/redir/redirect"]').each((_, el) => {
-    const href = $(el).attr("href");
-    try {
-      const target = new URL(href).searchParams.get("url");
-      if (target) $(el).attr("href", target);
-    } catch {
-      /* ignore malformed */
-    }
-  });
-
-  $("a[href]").each((_, el) => {
-    const href = $(el).attr("href");
-    if (!href || !href.includes("trk")) return;
-    const cleaned = stripTrk(href);
-    if (cleaned !== href) $(el).attr("href", cleaned);
-  });
-
-  if (origin) {
-    $('img[src*="licdn.com"]').each((_, el) => {
-      const src = $(el).attr("src");
-      $(el).attr("src", rewriteImageUrl(src, origin));
-    });
-  }
-
-  return $.html().replace(/<!--\s*-->/g, "");
-}
-
 function cleanArticle(article, origin) {
-  return {
-    ...article,
-    description: cleanHtml(article.description, origin),
-    img: rewriteImageUrl(article.img, origin),
-  };
-}
-
-/**
- * Parse newsletter listing page to extract metadata and article links.
- */
-export function parseNewsletterPage(html) {
-  const $ = cheerio.load(html);
-
-  const title = $("h1").text().trim();
-  const description =
-    $('meta[property="og:description"]').attr("content") ||
-    $("h2").first().text().trim();
-  const imageUrl =
-    $('meta[property="og:image"]').attr("content") ||
-    $("img.newsletter-image").attr("data-delayed-url") ||
-    "";
-
-  // Collect from the primary issues list first (preserves newest-first order)
-  // then merge in any other pulse links on the page (e.g. the right-rail
-  // "more articles" list contains older issues LinkedIn collapsed out of the
-  // main list).
-  const links = [];
-  const seen = new Set();
-  const push = (raw) => {
-    if (!raw) return;
-    const clean = raw.split("?")[0];
-    if (!/^https?:\/\/[^/]+\/pulse\/[^/]+/.test(clean)) return;
-    if (clean.includes("/pulse/api/")) return;
-    if (seen.has(clean)) return;
-    seen.add(clean);
-    links.push(clean);
-  };
-
-  $(
-    "section.newsletter__editions-container ul.newsletter__updates div.share-article a"
-  ).each((_, el) => push($(el).attr("href")));
-  $('a[href*="/pulse/"]').each((_, el) => push($(el).attr("href")));
-
-  return { title, description, imageUrl, links };
-}
-
-/**
- * Extract the parent newsletter slug from an article page's HTML.
- */
-export function findParentNewsletter(html) {
-  const $ = cheerio.load(html);
-  let slug = null;
-  $('a[href*="/newsletters/"]').each((_, el) => {
-    const href = $(el).attr("href");
-    if (href) {
-      const match = href.match(/\/newsletters\/([^/?]+)/);
-      if (match && !slug) slug = match[1];
-    }
-  });
-  return slug;
-}
-
-/**
- * Extract the author's profile username from an article page's HTML.
- * Returns the first /in/ link that isn't from comments.
- */
-export function findAuthorProfile(html) {
-  const $ = cheerio.load(html);
-  let username = null;
-  $('a[href*="/in/"]').each((_, el) => {
-    if (username) return;
-    const href = $(el).attr("href") || "";
-    // Skip comment author links (they have tracking params)
-    if (href.includes("trk=")) return;
-    const match = href.match(/\/in\/([^/?]+)/);
-    if (match) username = match[1];
-  });
-  return username;
-}
-
-/**
- * Extract pulse article links from a LinkedIn profile page's HTML.
- */
-export function parseProfileArticles(html) {
-  const $ = cheerio.load(html);
-  const links = [];
-  $('a[href*="/pulse/"]').each((_, el) => {
-    const href = $(el).attr("href");
-    if (href) {
-      const clean = href.split("?")[0];
-      const full = clean.startsWith("http")
-        ? clean
-        : `https://www.linkedin.com${clean}`;
-      if (!links.includes(full)) links.push(full);
-    }
-  });
-  return links;
-}
-
-/**
- * Parse a single article page to extract structured data.
- */
-export function parseArticlePage(html) {
-  const $ = cheerio.load(html);
-
-  let jsonLdData = {};
-  try {
-    const jsonLdScript = $('script[type="application/ld+json"]').first().text();
-    if (jsonLdScript) {
-      jsonLdData = JSON.parse(jsonLdScript);
-    }
-  } catch (e) {
-    // Fall back to HTML selectors if JSON-LD parsing fails
-  }
-
-  const img =
-    jsonLdData.image?.url || $("img.cover-img__image").attr("src") || "";
-  const imgCaption = $("figcaption.cover-img__caption").text().trim() || null;
-  const title = jsonLdData.name || $("h1").text().trim();
-
-  let pubDate = "";
-  if (jsonLdData.datePublished) {
-    pubDate = new Date(jsonLdData.datePublished).toUTCString();
-  }
-
-  const author =
-    jsonLdData.author?.name || $(".publisher-author-card h3").text().trim();
-
-  // The text paragraphs and the inline image blocks live as sibling
-  // children inside `article-content-blocks`, so iterating only
-  // `.article-main__content` would skip the images entirely. Take the
-  // whole container, minus LinkedIn's auto-recommended-articles widget.
-  let description = "";
-  const root = $('div[data-test-id="article-content-blocks"]').first();
-  if (root.length) {
-    root.find(".inline-articles").remove();
-    description = root.html() || "";
-  } else {
-    description = $(".article-main__content").html() || "";
-  }
-
-  return { title, author, img, imgCaption, pubDate, description };
-}
-
-/**
- * Fetch and parse a single article page.
- */
-export async function fetchAndParseArticle(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch article ${url}: ${response.status}`);
-  }
-  const html = await response.text();
-  return {
-    ...parseArticlePage(html),
-    parentNewsletter: findParentNewsletter(html),
-    link: url,
-  };
+  return { ...article, img: rewriteImageUrl(article.img, origin) };
 }
 
 /**
@@ -376,80 +142,40 @@ export function buildRssFeed(metadata, articles, selfUrl) {
   return xml(rss, { declaration: true, indent: "  " });
 }
 
-function homepageHtml() {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LinkedIn Newsletter RSS</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f5f5f5; color: #333;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    }
-    .container { max-width: 520px; width: 100%; padding: 2rem; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    p { color: #666; margin-bottom: 1.5rem; line-height: 1.5; }
-    form { display: flex; gap: 0.5rem; }
-    input {
-      flex: 1; padding: 0.75rem; border: 1px solid #ddd;
-      border-radius: 6px; font-size: 1rem;
-    }
-    input:focus { outline: none; border-color: #0a66c2; }
-    button {
-      padding: 0.75rem 1.25rem; background: #0a66c2; color: #fff;
-      border: none; border-radius: 6px; font-size: 1rem; cursor: pointer;
-    }
-    button:hover { background: #004182; }
-    .example { margin-top: 1rem; font-size: 0.85rem; color: #999; }
-    code {
-      background: #e8e8e8; padding: 0.15rem 0.35rem;
-      border-radius: 3px; font-size: 0.8rem;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>LinkedIn Newsletter to RSS</h1>
-    <p>Convert any LinkedIn newsletter into an RSS feed. Paste a newsletter URL, article URL, or slug below.</p>
-    <form id="form">
-      <input type="text" id="url" placeholder="https://www.linkedin.com/newsletters/..." required>
-      <button type="submit">Get Feed</button>
-    </form>
-    <p class="example">Accepts newsletter URLs, article URLs, or slugs</p>
-  </div>
-  <script>
-    document.getElementById("form").addEventListener("submit", function(e) {
-      e.preventDefault();
-      var input = document.getElementById("url").value.trim();
-      var match;
-      if ((match = input.match(/linkedin\\.com\\/newsletters\\/([^/?]+)/))) {
-        window.location.href = "/" + encodeURIComponent(match[1]);
-      } else if ((match = input.match(/linkedin\\.com\\/pulse\\/([^/?]+)/))) {
-        window.location.href = "/pulse/" + encodeURIComponent(match[1]);
-      } else {
-        var slug = input.replace(/^\\//, "");
-        if (slug) window.location.href = "/" + encodeURIComponent(slug);
-      }
-    });
-  </script>
-</body>
-</html>`;
+/**
+ * Fetch and parse one article, reusing the Cache API copy when there is one.
+ *
+ * A newsletter gains one issue at a time, so a rebuilt feed should reparse one
+ * document rather than five. Each article costs about 3.4ms to parse, and the
+ * free plan allows 10ms of CPU per request.
+ */
+async function cachedArticle(url, origin, ctx) {
+  const key = articleKey(url, origin);
+  const hit = await getJson(key);
+  if (hit) return hit;
+  const article = await fetchAndParseArticle(url, origin);
+  putJson(key, article, ARTICLE_TTL, ctx);
+  return article;
 }
 
-async function generateFeed(newsletter, selfUrl, page = 1) {
+function htmlResponse(html, status = 200) {
+  return new Response(html, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+async function generateFeed(newsletter, selfUrl, page = 1, ctx) {
   const url = `https://www.linkedin.com/newsletters/${newsletter}`;
-  const response = await fetch(url);
+  const response = await fetchUpstream(url);
   if (!response.ok) {
     throw new Error(
       `LinkedIn returned ${response.status} for newsletter "${newsletter}"`
     );
   }
-  const html = await response.text();
-  const { title, description, imageUrl, links } = parseNewsletterPage(html);
+  const { title, description, imageUrl, links } = await parseNewsletterPage(
+    response
+  );
 
   const origin = new URL(selfUrl).origin;
   const start = (page - 1) * PAGE_SIZE;
@@ -459,7 +185,7 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
   // safely loop until they hit zero items without DoSing the upstream.
   const results = pageLinks.length
     ? await Promise.allSettled(
-        pageLinks.map((link) => fetchAndParseArticle(link))
+        pageLinks.map((link) => cachedArticle(link, origin, ctx))
       )
     : [];
 
@@ -477,7 +203,7 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
     .filter((r) => r.status === "rejected")
     .forEach((r) => console.error(`Article fetch failed: ${r.reason.message}`));
 
-  return buildRssFeed(
+  const rss = buildRssFeed(
     {
       title,
       description,
@@ -487,6 +213,7 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
     articles,
     selfUrl
   );
+  return { rss, title };
 }
 
 async function handleImageProxy(id) {
@@ -513,15 +240,33 @@ async function handleImageProxy(id) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     try {
       const reqUrl = new URL(request.url);
       const pathname = reqUrl.pathname;
       const origin = reqUrl.origin;
 
       if (pathname === "/") {
-        return new Response(homepageHtml(), {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
+        // Not stored: the cron rewrites the most-followed list every 15
+        // minutes, and a stored copy would keep serving the old one until its
+        // TTL ran out. Rendering the page is a string concatenation, so the
+        // ETag and the browser cache carry the saving.
+        return await withCache(request, ctx, {
+          ttl: PAGE_TTL,
+          contentType: "text/html; charset=utf-8",
+          store: false,
+          build: async () => homepageHtml(await readPopular(env)),
+        });
+      }
+
+      // A pink dot, the same mark as the wordmark. Inline so it costs no
+      // storage and no second origin.
+      if (pathname === "/favicon.ico" || pathname === "/favicon.svg") {
+        return new Response(FAVICON, {
+          headers: {
+            "content-type": "image/svg+xml",
+            "cache-control": "public, max-age=604800",
+          },
         });
       }
 
@@ -539,26 +284,16 @@ export default {
           return new Response("Missing slug", { status: 400 });
         }
         const articleUrl = `https://www.linkedin.com/pulse/${slug}`;
-        const articleResponse = await fetch(articleUrl);
-        if (!articleResponse.ok) {
-          return new Response(
-            `LinkedIn returned ${articleResponse.status}`,
-            { status: articleResponse.status }
-          );
-        }
-        const articleHtml = await articleResponse.text();
+        // Shares the feed's article cache, so this route both reads it and
+        // fills it. The cron warmer uses that: see warmPopular().
         const article = cleanArticle(
-          {
-            ...parseArticlePage(articleHtml),
-            parentNewsletter: findParentNewsletter(articleHtml),
-            link: articleUrl,
-          },
+          await cachedArticle(articleUrl, origin, ctx),
           origin
         );
         return new Response(JSON.stringify(article), {
           headers: {
             "content-type": "application/json; charset=utf-8",
-            "cache-control": "public, max-age=300",
+            "cache-control": `public, max-age=${ARTICLE_TTL}`,
           },
         });
       }
@@ -575,91 +310,140 @@ export default {
       if (pathname.startsWith("/pulse/")) {
         const articleSlug = pathname.substring("/pulse/".length);
         const articleUrl = `https://www.linkedin.com/pulse/${articleSlug}`;
-        const articleResponse = await fetch(articleUrl);
-        if (!articleResponse.ok) {
-          throw new Error(`LinkedIn returned ${articleResponse.status} for article`);
-        }
-        const articleHtml = await articleResponse.text();
 
-        // If article belongs to a newsletter, redirect to the full feed
-        const newsletterSlug = findParentNewsletter(articleHtml);
-        if (newsletterSlug) {
-          return Response.redirect(`${origin}/${newsletterSlug}`, 302);
-        }
+        // One cached pass over the page yields the parent newsletter, the
+        // author profile and the article itself. The article cache therefore
+        // doubles as the redirect cache: a repeat visit costs no LinkedIn
+        // round trip at all.
+        const parsedArticle = await cachedArticle(articleUrl, origin, ctx);
 
-        // Standalone article - try to find more articles by the same author
-        const authorUsername = findAuthorProfile(articleHtml);
-        if (authorUsername) {
-          const profileUrl = `https://www.linkedin.com/in/${authorUsername}`;
-          const profileResponse = await fetch(profileUrl, {
-            headers: { "User-Agent": BROWSER_UA },
+        // If the article belongs to a newsletter, redirect to the full feed.
+        if (parsedArticle.parentNewsletter) {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              location: `${origin}/${parsedArticle.parentNewsletter}`,
+              "cache-control": `public, max-age=${REDIRECT_TTL}`,
+            },
           });
-          if (profileResponse.ok) {
-            const profileHtml = await profileResponse.text();
-            const articleLinks = parseProfileArticles(profileHtml);
-            if (articleLinks.length > 0) {
-              const results = await Promise.allSettled(
-                articleLinks.map((link) => fetchAndParseArticle(link))
-              );
-              const articles = results
-                .filter((r) => r.status === "fulfilled")
-                .map((r) => cleanArticle(r.value, origin));
-              results
-                .filter((r) => r.status === "rejected")
-                .forEach((r) =>
-                  console.error(`Article fetch failed: ${r.reason.message}`)
-                );
-              if (articles.length > 0) {
-                const authorName =
-                  articles[0].author || authorUsername;
-                const metadata = {
-                  title: `Articles by ${authorName}`,
-                  description: `Articles by ${authorName} on LinkedIn`,
-                  imageUrl: articles[0].img,
-                  link: profileUrl,
-                };
-                const xmlContent = buildRssFeed(
-                  metadata,
-                  articles,
-                  request.url
-                );
-                return new Response(xmlContent, {
-                  headers: { "Content-Type": "application/rss+xml" },
-                });
+        }
+
+        return await withCache(request, ctx, {
+          ttl: FEED_TTL,
+          contentType: "application/rss+xml; charset=utf-8",
+          build: async () => {
+            // Standalone article: try to find more by the same author.
+            const authorUsername = parsedArticle.authorProfile;
+            if (authorUsername) {
+              const profileUrl = `https://www.linkedin.com/in/${authorUsername}`;
+              const profileResponse = await fetchUpstream(profileUrl, {
+                headers: { "User-Agent": BROWSER_UA },
+              });
+              if (profileResponse.ok) {
+                const articleLinks = await parseProfileArticles(profileResponse);
+                if (articleLinks.length > 0) {
+                  // Bounded: the free plan allows 50 subrequests per
+                  // invocation and a busy profile lists more.
+                  const results = await Promise.allSettled(
+                    articleLinks
+                      .slice(0, PAGE_SIZE)
+                      .map((link) => cachedArticle(link, origin, ctx))
+                  );
+                  const articles = results
+                    .filter((r) => r.status === "fulfilled")
+                    .map((r) => cleanArticle(r.value, origin));
+                  results
+                    .filter((r) => r.status === "rejected")
+                    .forEach((r) =>
+                      console.error(`Article fetch failed: ${r.reason.message}`)
+                    );
+                  if (articles.length > 0) {
+                    const authorName = articles[0].author || authorUsername;
+                    return {
+                      body: buildRssFeed(
+                        {
+                          title: `Articles by ${authorName}`,
+                          description: `Articles by ${authorName} on LinkedIn`,
+                          imageUrl: articles[0].img,
+                          link: profileUrl,
+                        },
+                        articles,
+                        request.url
+                      ),
+                    };
+                  }
+                }
               }
             }
-          }
-        }
 
-        // Fallback: single-item feed from just this article
-        const article = cleanArticle(
-          { ...parseArticlePage(articleHtml), link: articleUrl },
-          origin
-        );
-        const metadata = {
-          title: article.title,
-          description: article.title,
-          imageUrl: article.img,
-          link: articleUrl,
-        };
-        const xmlContent = buildRssFeed(metadata, [article], request.url);
-        return new Response(xmlContent, {
-          headers: { "Content-Type": "application/rss+xml" },
+            // Fallback: single-item feed from just this article.
+            const article = cleanArticle(
+              { ...parsedArticle, link: articleUrl },
+              origin
+            );
+            return {
+              body: buildRssFeed(
+                {
+                  title: article.title,
+                  description: article.title,
+                  imageUrl: article.img,
+                  link: articleUrl,
+                },
+                [article],
+                request.url
+              ),
+            };
+          },
         });
       }
 
       const pageParam = parseInt(reqUrl.searchParams.get("page") || "1", 10);
       const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-      const xmlContent = await generateFeed(slug, request.url, page);
-      return new Response(xmlContent, {
-        headers: { "Content-Type": "application/rss+xml" },
+      const feed = await withCache(request, ctx, {
+        ttl: FEED_TTL,
+        contentType: "application/rss+xml; charset=utf-8",
+        build: async () => {
+          const { rss, title } = await generateFeed(slug, request.url, page, ctx);
+          // Carried as a header so a cache hit still knows the title, and the
+          // request can be counted without rebuilding the feed to learn it.
+          return { body: rss, meta: { "x-feed-title": title } };
+        },
       });
+      // Counted on every request, cached or not: the question is how often a
+      // newsletter is asked for, not how often we rebuild it.
+      recordHit(env, ctx, {
+        slug,
+        title: feed.headers.get("x-feed-title") || "",
+        kind: "newsletter",
+      });
+      return feed;
     } catch (error) {
+      // Logged in full, shown in outline. The thrown message can name an
+      // upstream URL or a parser internal, which the reader has no use for.
       console.error("Error:", error);
-      return new Response(`Error generating RSS feed: ${error.message}`, {
-        status: 500,
-        headers: { "Content-Type": "text/plain" },
-      });
+      // LinkedIn answers 500 for a newsletter that does not exist, so an
+      // upstream failure cannot be told apart from a typo. Say both, and use
+      // 502: a feed reader retries that, where a 404 would make it give up on
+      // a feed that is only briefly unavailable.
+      const status = /\b(40[34]|410)\b/.test(error.message) ? 404 : 502;
+      return htmlResponse(errorHtml(status), status);
     }
+  },
+
+  /**
+   * Refreshes the most-followed list. Reading Analytics Engine costs a query
+   * against a 10,000 per day allowance, so it happens here rather than on every
+   * homepage request.
+   */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      refreshPopular(env)
+        .then((result) => console.log("Popularity refresh:", JSON.stringify(result)))
+        .catch((error) => console.error("Popularity refresh failed:", error.message))
+        // Warming runs after the refresh so it uses the list just written.
+        .then(() => warmPopular(env))
+        .then((result) => console.log("Cache warm:", JSON.stringify(result)))
+        .catch((error) => console.error("Cache warm failed:", error.message))
+    );
   },
 };
