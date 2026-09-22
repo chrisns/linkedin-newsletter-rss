@@ -19,18 +19,18 @@ SITE_URL = "https://linkedinrss.cns.me"
 binding = "AE"
 dataset = "linkedinrss"
 
-# Publishing the numbers needs a KV namespace, which has to be created first:
+# Holds the most-followed list the cron writes and the homepage reads. One key,
+# rewritten every 15 minutes: 96 writes a day against a free allowance of 1,000.
 #
-#   npx wrangler kv namespace create POPULAR
+# Reading the numbers also needs two secrets, which are not in this file:
+#
 #   npx wrangler secret put CF_ACCOUNT_ID
 #   npx wrangler secret put CF_ANALYTICS_TOKEN   # Account Analytics: Read
 #
-# Then paste the returned id below and uncomment both blocks. Until then the
-# Worker still collects; the homepage simply omits the most-followed panel.
-#
-# [[kv_namespaces]]
-# binding = "POPULAR"
-# id = "PASTE_THE_ID_HERE"
-#
-# [triggers]
-# crons = ["*/15 * * * *"]
+# Without them the cron logs that it skipped, and the homepage omits the panel.
+[[kv_namespaces]]
+binding = "POPULAR"
+id = "c92dbf62758245cdbc96c293def8d3ef"
+
+[triggers]
+crons = ["*/15 * * * *"]

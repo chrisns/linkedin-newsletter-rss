@@ -77,16 +77,16 @@ allowance of 1,000.
 Both bindings are optional. Without them the Worker still serves feeds, and the
 homepage omits the most-followed panel.
 
-To turn the panel on:
+The bindings and the cron are configured. Reading the numbers back also needs an
+API token with **Account Analytics: Read**, created in the Cloudflare dashboard
+under *My Profile → API Tokens*:
 
 ```bash
-npx wrangler kv namespace create POPULAR
-npx wrangler secret put CF_ACCOUNT_ID
-npx wrangler secret put CF_ANALYTICS_TOKEN   # needs Account Analytics: Read
+npx wrangler secret put CF_ANALYTICS_TOKEN
 ```
 
-Then paste the namespace id into `wrangler.toml` and uncomment the
-`kv_namespaces` and `triggers` blocks.
+Until that secret exists the cron logs that it skipped, and the homepage omits
+the panel. Collection is unaffected and runs either way.
 
 ## Caching
 
