@@ -88,6 +88,34 @@ npx wrangler secret put CF_ANALYTICS_TOKEN   # needs Account Analytics: Read
 Then paste the namespace id into `wrangler.toml` and uncomment the
 `kv_namespaces` and `triggers` blocks.
 
+## Caching
+
+RSS readers poll hard and mostly get the same bytes back. Three layers, cheapest
+first:
+
+1. A conditional request answered with `304`, which sends no body.
+2. The feed response in the Cache API, which costs almost no CPU to serve.
+3. Each parsed article in the Cache API, so a rebuild reparses the issue that is
+   new rather than all five.
+
+Layer 3 is what makes the budget work. A feed copy lives 15 minutes; the issues
+it is built from live 24 hours. Measured in workerd against five real articles:
+
+| Path | CPU |
+|---|---|
+| Repeat poll, cache hit | 1-2ms |
+| Conditional poll, `304` | 1ms |
+| Rebuild, issues still cached | 5ms |
+| Build with nothing cached | 35ms |
+
+The free plan allows 10ms, so only the last one is a problem. The cron warms the
+issues of the busiest newsletters through the `/article/` route, one per
+invocation, because each invocation gets its own budget. It does not request the
+feeds: that request would be the expensive one.
+
+`caches.default` needs no binding and is free. It is per-datacentre and
+evictable, so every layer treats a miss as normal.
+
 ## How it works
 
 ### Parsing

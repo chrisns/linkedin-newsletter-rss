@@ -1,7 +1,23 @@
 import xml from "xml";
 
 import { errorHtml, FAVICON, homepageHtml } from "./pages.js";
-import { readPopular, recordHit, refreshPopular } from "./popular.js";
+import {
+  readPopular,
+  recordHit,
+  refreshPopular,
+  warmPopular,
+} from "./popular.js";
+import {
+  ARTICLE_TTL,
+  articleKey,
+  FEED_TTL,
+  fetchUpstream,
+  getJson,
+  PAGE_TTL,
+  putJson,
+  REDIRECT_TTL,
+  withCache,
+} from "./cache.js";
 
 import {
   cleanHtml,
@@ -126,6 +142,22 @@ export function buildRssFeed(metadata, articles, selfUrl) {
   return xml(rss, { declaration: true, indent: "  " });
 }
 
+/**
+ * Fetch and parse one article, reusing the Cache API copy when there is one.
+ *
+ * A newsletter gains one issue at a time, so a rebuilt feed should reparse one
+ * document rather than five. Each article costs about 3.4ms to parse, and the
+ * free plan allows 10ms of CPU per request.
+ */
+async function cachedArticle(url, origin, ctx) {
+  const key = articleKey(url, origin);
+  const hit = await getJson(key);
+  if (hit) return hit;
+  const article = await fetchAndParseArticle(url, origin);
+  putJson(key, article, ARTICLE_TTL, ctx);
+  return article;
+}
+
 function htmlResponse(html, status = 200) {
   return new Response(html, {
     status,
@@ -133,9 +165,9 @@ function htmlResponse(html, status = 200) {
   });
 }
 
-async function generateFeed(newsletter, selfUrl, page = 1) {
+async function generateFeed(newsletter, selfUrl, page = 1, ctx) {
   const url = `https://www.linkedin.com/newsletters/${newsletter}`;
-  const response = await fetch(url);
+  const response = await fetchUpstream(url);
   if (!response.ok) {
     throw new Error(
       `LinkedIn returned ${response.status} for newsletter "${newsletter}"`
@@ -153,7 +185,7 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
   // safely loop until they hit zero items without DoSing the upstream.
   const results = pageLinks.length
     ? await Promise.allSettled(
-        pageLinks.map((link) => fetchAndParseArticle(link, origin))
+        pageLinks.map((link) => cachedArticle(link, origin, ctx))
       )
     : [];
 
@@ -215,7 +247,16 @@ export default {
       const origin = reqUrl.origin;
 
       if (pathname === "/") {
-        return htmlResponse(homepageHtml(await readPopular(env)));
+        // Not stored: the cron rewrites the most-followed list every 15
+        // minutes, and a stored copy would keep serving the old one until its
+        // TTL ran out. Rendering the page is a string concatenation, so the
+        // ETag and the browser cache carry the saving.
+        return await withCache(request, ctx, {
+          ttl: PAGE_TTL,
+          contentType: "text/html; charset=utf-8",
+          store: false,
+          build: async () => homepageHtml(await readPopular(env)),
+        });
       }
 
       // A pink dot, the same mark as the wordmark. Inline so it costs no
@@ -243,21 +284,16 @@ export default {
           return new Response("Missing slug", { status: 400 });
         }
         const articleUrl = `https://www.linkedin.com/pulse/${slug}`;
-        const articleResponse = await fetch(articleUrl);
-        if (!articleResponse.ok) {
-          return new Response(
-            `LinkedIn returned ${articleResponse.status}`,
-            { status: articleResponse.status }
-          );
-        }
+        // Shares the feed's article cache, so this route both reads it and
+        // fills it. The cron warmer uses that: see warmPopular().
         const article = cleanArticle(
-          { ...(await parseArticlePage(articleResponse, origin)), link: articleUrl },
+          await cachedArticle(articleUrl, origin, ctx),
           origin
         );
         return new Response(JSON.stringify(article), {
           headers: {
             "content-type": "application/json; charset=utf-8",
-            "cache-control": "public, max-age=300",
+            "cache-control": `public, max-age=${ARTICLE_TTL}`,
           },
         });
       }
@@ -274,91 +310,113 @@ export default {
       if (pathname.startsWith("/pulse/")) {
         const articleSlug = pathname.substring("/pulse/".length);
         const articleUrl = `https://www.linkedin.com/pulse/${articleSlug}`;
-        const articleResponse = await fetch(articleUrl);
-        if (!articleResponse.ok) {
-          throw new Error(`LinkedIn returned ${articleResponse.status} for article`);
-        }
-        // One pass over the page yields the parent newsletter, the author
-        // profile and the article itself.
-        const parsedArticle = await parseArticlePage(articleResponse, origin);
 
-        // If article belongs to a newsletter, redirect to the full feed
-        const newsletterSlug = parsedArticle.parentNewsletter;
-        if (newsletterSlug) {
-          return Response.redirect(`${origin}/${newsletterSlug}`, 302);
-        }
+        // One cached pass over the page yields the parent newsletter, the
+        // author profile and the article itself. The article cache therefore
+        // doubles as the redirect cache: a repeat visit costs no LinkedIn
+        // round trip at all.
+        const parsedArticle = await cachedArticle(articleUrl, origin, ctx);
 
-        // Standalone article - try to find more articles by the same author
-        const authorUsername = parsedArticle.authorProfile;
-        if (authorUsername) {
-          const profileUrl = `https://www.linkedin.com/in/${authorUsername}`;
-          const profileResponse = await fetch(profileUrl, {
-            headers: { "User-Agent": BROWSER_UA },
+        // If the article belongs to a newsletter, redirect to the full feed.
+        if (parsedArticle.parentNewsletter) {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              location: `${origin}/${parsedArticle.parentNewsletter}`,
+              "cache-control": `public, max-age=${REDIRECT_TTL}`,
+            },
           });
-          if (profileResponse.ok) {
-            const articleLinks = await parseProfileArticles(profileResponse);
-            if (articleLinks.length > 0) {
-              // Bounded: the free plan allows 50 subrequests per invocation and
-              // a busy profile lists far more articles than that.
-              const results = await Promise.allSettled(
-                articleLinks
-                  .slice(0, PAGE_SIZE)
-                  .map((link) => fetchAndParseArticle(link, origin))
-              );
-              const articles = results
-                .filter((r) => r.status === "fulfilled")
-                .map((r) => cleanArticle(r.value, origin));
-              results
-                .filter((r) => r.status === "rejected")
-                .forEach((r) =>
-                  console.error(`Article fetch failed: ${r.reason.message}`)
-                );
-              if (articles.length > 0) {
-                const authorName =
-                  articles[0].author || authorUsername;
-                const metadata = {
-                  title: `Articles by ${authorName}`,
-                  description: `Articles by ${authorName} on LinkedIn`,
-                  imageUrl: articles[0].img,
-                  link: profileUrl,
-                };
-                const xmlContent = buildRssFeed(
-                  metadata,
-                  articles,
-                  request.url
-                );
-                return new Response(xmlContent, {
-                  headers: { "Content-Type": "application/rss+xml" },
-                });
+        }
+
+        return await withCache(request, ctx, {
+          ttl: FEED_TTL,
+          contentType: "application/rss+xml; charset=utf-8",
+          build: async () => {
+            // Standalone article: try to find more by the same author.
+            const authorUsername = parsedArticle.authorProfile;
+            if (authorUsername) {
+              const profileUrl = `https://www.linkedin.com/in/${authorUsername}`;
+              const profileResponse = await fetchUpstream(profileUrl, {
+                headers: { "User-Agent": BROWSER_UA },
+              });
+              if (profileResponse.ok) {
+                const articleLinks = await parseProfileArticles(profileResponse);
+                if (articleLinks.length > 0) {
+                  // Bounded: the free plan allows 50 subrequests per
+                  // invocation and a busy profile lists more.
+                  const results = await Promise.allSettled(
+                    articleLinks
+                      .slice(0, PAGE_SIZE)
+                      .map((link) => cachedArticle(link, origin, ctx))
+                  );
+                  const articles = results
+                    .filter((r) => r.status === "fulfilled")
+                    .map((r) => cleanArticle(r.value, origin));
+                  results
+                    .filter((r) => r.status === "rejected")
+                    .forEach((r) =>
+                      console.error(`Article fetch failed: ${r.reason.message}`)
+                    );
+                  if (articles.length > 0) {
+                    const authorName = articles[0].author || authorUsername;
+                    return {
+                      body: buildRssFeed(
+                        {
+                          title: `Articles by ${authorName}`,
+                          description: `Articles by ${authorName} on LinkedIn`,
+                          imageUrl: articles[0].img,
+                          link: profileUrl,
+                        },
+                        articles,
+                        request.url
+                      ),
+                    };
+                  }
+                }
               }
             }
-          }
-        }
 
-        // Fallback: single-item feed from just this article
-        const article = cleanArticle(
-          { ...parsedArticle, link: articleUrl },
-          origin
-        );
-        const metadata = {
-          title: article.title,
-          description: article.title,
-          imageUrl: article.img,
-          link: articleUrl,
-        };
-        const xmlContent = buildRssFeed(metadata, [article], request.url);
-        return new Response(xmlContent, {
-          headers: { "Content-Type": "application/rss+xml" },
+            // Fallback: single-item feed from just this article.
+            const article = cleanArticle(
+              { ...parsedArticle, link: articleUrl },
+              origin
+            );
+            return {
+              body: buildRssFeed(
+                {
+                  title: article.title,
+                  description: article.title,
+                  imageUrl: article.img,
+                  link: articleUrl,
+                },
+                [article],
+                request.url
+              ),
+            };
+          },
         });
       }
 
       const pageParam = parseInt(reqUrl.searchParams.get("page") || "1", 10);
       const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-      const { rss, title } = await generateFeed(slug, request.url, page);
-      recordHit(env, ctx, { slug, title, kind: "newsletter" });
-      return new Response(rss, {
-        headers: { "Content-Type": "application/rss+xml" },
+      const feed = await withCache(request, ctx, {
+        ttl: FEED_TTL,
+        contentType: "application/rss+xml; charset=utf-8",
+        build: async () => {
+          const { rss, title } = await generateFeed(slug, request.url, page, ctx);
+          // Carried as a header so a cache hit still knows the title, and the
+          // request can be counted without rebuilding the feed to learn it.
+          return { body: rss, meta: { "x-feed-title": title } };
+        },
       });
+      // Counted on every request, cached or not: the question is how often a
+      // newsletter is asked for, not how often we rebuild it.
+      recordHit(env, ctx, {
+        slug,
+        title: feed.headers.get("x-feed-title") || "",
+        kind: "newsletter",
+      });
+      return feed;
     } catch (error) {
       // Logged in full, shown in outline. The thrown message can name an
       // upstream URL or a parser internal, which the reader has no use for.
@@ -367,7 +425,7 @@ export default {
       // upstream failure cannot be told apart from a typo. Say both, and use
       // 502: a feed reader retries that, where a 404 would make it give up on
       // a feed that is only briefly unavailable.
-      if (/^LinkedIn returned 40[34]\b|^LinkedIn returned 410\b/.test(error.message)) {
+      if (/\b(40[34]|410)\b/.test(error.message)) {
         return htmlResponse(
           errorHtml(
             404,
@@ -398,6 +456,10 @@ export default {
       refreshPopular(env)
         .then((result) => console.log("Popularity refresh:", JSON.stringify(result)))
         .catch((error) => console.error("Popularity refresh failed:", error.message))
+        // Warming runs after the refresh so it uses the list just written.
+        .then(() => warmPopular(env))
+        .then((result) => console.log("Cache warm:", JSON.stringify(result)))
+        .catch((error) => console.error("Cache warm failed:", error.message))
     );
   },
 };

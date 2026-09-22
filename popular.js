@@ -13,8 +13,15 @@
  * Every binding here is optional. Without them the Worker still serves feeds
  * and the homepage simply omits the panel.
  */
+import { parseNewsletterPage } from "./parse.js";
 
 export const KV_KEY = "popular:v1";
+
+/** How many newsletters one cron run warms. Bounded by two limits: the free
+ * plan allows 50 subrequests per invocation, and a scheduled invocation gets
+ * the same 10ms of CPU as any other. */
+export const WARM_NEWSLETTERS = 5;
+export const WARM_ARTICLES_EACH = 5;
 export const WINDOW_DAYS = 7;
 export const TOP_N = 20;
 
@@ -128,4 +135,50 @@ export async function refreshPopular(env, fetchImpl = fetch) {
 
   await env.POPULAR.put(KV_KEY, JSON.stringify(rows));
   return { count: rows.length };
+}
+
+/**
+ * Keep the parsed issues of the busiest newsletters in the cache.
+ *
+ * This is what stops a reader ever paying for a cold build. A feed copy lives
+ * 15 minutes and the issues it is built from live 24 hours, so a rebuild costs
+ * about 7ms against a 10ms budget. A build with nothing cached costs about
+ * 38ms and would be cut off.
+ *
+ * The cron cannot simply request each feed, because that request would be the
+ * expensive one. It warms the issues instead, one per invocation, through the
+ * /article/ route. Each of those gets its own CPU budget and costs about 3.4ms.
+ */
+export async function warmPopular(env, fetchImpl = fetch) {
+  const site = env?.SITE_URL;
+  if (!site) return { warmed: 0, skipped: true };
+
+  const rows = (await readPopular(env)).slice(0, WARM_NEWSLETTERS);
+  if (rows.length === 0) return { warmed: 0 };
+
+  let warmed = 0;
+
+  for (const row of rows) {
+    try {
+      const listing = await fetchImpl(
+        `https://www.linkedin.com/newsletters/${row.slug}`
+      );
+      if (!listing.ok) continue;
+      const { links } = await parseNewsletterPage(listing);
+      const slugs = links
+        .slice(0, WARM_ARTICLES_EACH)
+        .map((link) => link.split("/pulse/")[1])
+        .filter(Boolean);
+      const results = await Promise.allSettled(
+        slugs.map((slug) => fetchImpl(`${site}/article/${slug}`))
+      );
+      warmed += results.filter(
+        (r) => r.status === "fulfilled" && r.value.ok
+      ).length;
+    } catch (error) {
+      console.error(`Warm failed for ${row.slug}:`, error.message);
+    }
+  }
+
+  return { warmed };
 }

@@ -7,6 +7,12 @@ compatibility_flags = ["nodejs_compat"]
 
 route = { pattern = "linkedinrss.cns.me/*", zone_name = "cns.me" }
 
+# Where the cron warmer sends its own requests. Each one gets its own CPU
+# budget, which is the point: warming an issue costs about 3.4ms, where
+# building a whole feed from nothing costs about 38ms against a 10ms limit.
+[vars]
+SITE_URL = "https://linkedinrss.cns.me"
+
 # Popularity. The dataset needs no pre-created resource, so collection starts
 # on the next deploy. Free plan: 100,000 data points written per day.
 [[analytics_engine_datasets]]

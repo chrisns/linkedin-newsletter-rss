@@ -1,3 +1,5 @@
+import { fetchUpstream } from "./cache.js";
+
 /**
  * HTML parsing built on HTMLRewriter.
  *
@@ -606,7 +608,7 @@ export async function parseArticlePage(input, origin) {
  * materialised as a JS string.
  */
 export async function fetchAndParseArticle(url, origin) {
-  const response = await fetch(url);
+  const response = await fetchUpstream(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch article ${url}: ${response.status}`);
   }

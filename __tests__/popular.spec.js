@@ -6,6 +6,8 @@ import {
   readPopular,
   recordHit,
   refreshPopular,
+  warmPopular,
+  WARM_NEWSLETTERS,
 } from "../popular.js";
 
 const ROWS = [
@@ -177,5 +179,83 @@ describe("Homepage popularity panel", () => {
     const html = await (await SELF.fetch("https://example.com/")).text();
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("warmPopular", () => {
+  const LISTING = `<!DOCTYPE html><html><body><h1>N</h1>
+    <a href="https://www.linkedin.com/pulse/one-abc">1</a>
+    <a href="https://www.linkedin.com/pulse/two-def">2</a>
+  </body></html>`;
+
+  beforeEach(async () => {
+    await env.POPULAR.delete(KV_KEY);
+  });
+
+  it("does nothing without SITE_URL", async () => {
+    expect(await warmPopular({ POPULAR: env.POPULAR })).toEqual({
+      warmed: 0,
+      skipped: true,
+    });
+  });
+
+  it("does nothing before the popularity list exists", async () => {
+    const result = await warmPopular(
+      { POPULAR: env.POPULAR, SITE_URL: "https://s.test" },
+      vi.fn()
+    );
+    expect(result).toEqual({ warmed: 0 });
+  });
+
+  it("warms each issue through the /article/ route, not the feed", async () => {
+    await env.POPULAR.put(KV_KEY, JSON.stringify([{ slug: "n-1", title: "N", hits: 9 }]));
+    const fetchImpl = vi.fn(async (url) =>
+      url.includes("/newsletters/") ? new Response(LISTING) : new Response("{}")
+    );
+    const result = await warmPopular(
+      { POPULAR: env.POPULAR, SITE_URL: "https://s.test" },
+      fetchImpl
+    );
+    expect(result).toEqual({ warmed: 2 });
+
+    const urls = fetchImpl.mock.calls.map(([u]) => u);
+    expect(urls).toContain("https://s.test/article/one-abc");
+    expect(urls).toContain("https://s.test/article/two-def");
+    // Requesting the feed itself would be the expensive build we are avoiding.
+    expect(urls.some((u) => u === "https://s.test/n-1")).toBe(false);
+  });
+
+  it("stays inside the subrequest limit", async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      slug: `n-${i}`,
+      title: `N${i}`,
+      hits: 100 - i,
+    }));
+    await env.POPULAR.put(KV_KEY, JSON.stringify(many));
+    const fetchImpl = vi.fn(async (url) =>
+      url.includes("/newsletters/") ? new Response(LISTING) : new Response("{}")
+    );
+    await warmPopular({ POPULAR: env.POPULAR, SITE_URL: "https://s.test" }, fetchImpl);
+    // WARM_NEWSLETTERS listings plus their issues, against a limit of 50.
+    expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(50);
+    expect(fetchImpl.mock.calls.length).toBe(WARM_NEWSLETTERS * 3);
+  });
+
+  it("carries on when one newsletter fails", async () => {
+    await env.POPULAR.put(
+      KV_KEY,
+      JSON.stringify([
+        { slug: "bad", title: "Bad", hits: 9 },
+        { slug: "good", title: "Good", hits: 8 },
+      ])
+    );
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.includes("/newsletters/bad")) throw new Error("upstream down");
+      if (url.includes("/newsletters/")) return new Response(LISTING);
+      return new Response("{}");
+    });
+    expect(
+      await warmPopular({ POPULAR: env.POPULAR, SITE_URL: "https://s.test" }, fetchImpl)
+    ).toEqual({ warmed: 2 });
   });
 });

@@ -506,7 +506,7 @@ describe("RSS generation (mocked)", () => {
       "https://example.com/test-newsletter"
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("application/rss+xml");
+    expect(response.headers.get("content-type")).toBe("application/rss+xml; charset=utf-8");
 
     const text = await response.text();
     expect(text).toContain("<title>Tech Leadership Weekly</title>");
@@ -617,7 +617,7 @@ describe("Pulse article URLs (mocked)", () => {
       "https://example.com/pulse/teaching-computer-bsl-cns-rhs8e"
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("application/rss+xml");
+    expect(response.headers.get("content-type")).toBe("application/rss+xml; charset=utf-8");
 
     const text = await response.text();
     expect(text).toContain("<title>Articles by Chris Nesbitt-Smith</title>");
@@ -933,7 +933,7 @@ describe("Integration (live)", () => {
       "https://example.com/james-caan-s-business-secrets-6676195873757679616"
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("application/rss+xml");
+    expect(response.headers.get("content-type")).toBe("application/rss+xml; charset=utf-8");
 
     const text = await response.text();
     expect(text).toContain(
