@@ -90,6 +90,12 @@ export function notModified(request, response) {
     const value = response.headers.get(name);
     if (value) headers.set(name, value);
   }
+  // Carry the caller's own headers through as well. A 304 is allowed to hold
+  // them, and dropping them loses whatever `withCache` stored in `meta`: a
+  // reader that polls conditionally would otherwise report a nameless feed.
+  for (const [name, value] of response.headers) {
+    if (name.startsWith("x-")) headers.set(name, value);
+  }
   return new Response(null, { status: 304, headers });
 }
 

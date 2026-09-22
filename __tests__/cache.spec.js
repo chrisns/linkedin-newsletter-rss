@@ -168,3 +168,30 @@ describe("Non-ASCII feed titles", () => {
     expect(await res.text()).toContain("IA générative");
   });
 });
+
+describe("304 responses keep the caller's headers", () => {
+  it("carries x-feed-title through, so a conditional poll is still named", async () => {
+    const url = `https://example.com/${freshSlug()}`;
+    const first = await SELF.fetch(url);
+    const title = first.headers.get("x-feed-title");
+    expect(title).toBeTruthy();
+
+    const second = await SELF.fetch(url, {
+      headers: { "if-none-match": first.headers.get("etag") },
+    });
+    expect(second.status).toBe(304);
+    // Production showed most popularity rows with an empty title, because a
+    // conditional poll dropped this header and recorded "".
+    expect(second.headers.get("x-feed-title")).toBe(title);
+  });
+
+  it("still carries the standard validators", async () => {
+    const url = `https://example.com/${freshSlug()}`;
+    const first = await SELF.fetch(url);
+    const second = await SELF.fetch(url, {
+      headers: { "if-none-match": first.headers.get("etag") },
+    });
+    expect(second.headers.get("etag")).toBe(first.headers.get("etag"));
+    expect(second.headers.get("cache-control")).toBe("public, max-age=900");
+  });
+});
