@@ -1,295 +1,42 @@
-import * as cheerio from "cheerio";
 import xml from "xml";
+
+import {
+  cleanHtml,
+  decodeImgId,
+  encodeImgId,
+  fetchAndParseArticle,
+  findAuthorProfile,
+  findParentNewsletter,
+  parseArticlePage,
+  parseNewsletterPage,
+  parseProfileArticles,
+  rewriteImageUrl,
+  stripTrk,
+} from "./parse.js";
+
+// Re-exported so consumers and tests keep a single entry point.
+export {
+  cleanHtml,
+  decodeImgId,
+  encodeImgId,
+  fetchAndParseArticle,
+  findAuthorProfile,
+  findParentNewsletter,
+  parseArticlePage,
+  parseNewsletterPage,
+  parseProfileArticles,
+  stripTrk,
+};
 
 const BROWSER_UA = "Mozilla/5.0 (compatible)";
 const PAGE_SIZE = 5;
 
 /**
- * base64url encode/decode for stateless image proxy IDs.
+ * `parseArticlePage` already cleans the body in its own pass, so only the
+ * cover image is left to rewrite.
  */
-export function encodeImgId(url) {
-  return btoa(url).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-export function decodeImgId(id) {
-  let s = id.replace(/-/g, "+").replace(/_/g, "/");
-  while (s.length % 4) s += "=";
-  return atob(s);
-}
-
-/**
- * Strip every `trk*=…` query param from a URL string. Tolerates malformed
- * inputs that LinkedIn occasionally emits (e.g. `#fragment?trk=…`, where
- * `?` lands inside the fragment). Pure regex — never throws.
- */
-export function stripTrk(href) {
-  let h = href;
-  h = h.replace(/([?&])trk[^=&]*=[^&#]*&/g, "$1");
-  h = h.replace(/[?&]trk[^=&]*=[^&#]*/g, "");
-  return h;
-}
-
-function rewriteImageUrl(url, origin) {
-  if (!url) return url;
-  if (!/(^|\.)licdn\.com\//.test(url)) return url;
-  return `${origin}/img/${encodeImgId(url)}`;
-}
-
-/**
- * Clean LinkedIn-flavoured HTML: strip tracking attrs, unwrap redirect
- * links, drop ?trk= params, rewrite images through the proxy, and
- * remove empty HTML comments.
- */
-export function cleanHtml(html, origin) {
-  if (!html) return html;
-  const $ = cheerio.load(html, { decodeEntities: false }, false);
-
-  // LinkedIn ships inline article images with data-delayed-url instead of
-  // src so a JS lazy-loader can populate them. We're not running their JS,
-  // so promote data-delayed-url -> src before the rest of the pipeline.
-  $("img[data-delayed-url]").each((_, el) => {
-    const $el = $(el);
-    if (!$el.attr("src")) {
-      $el.attr("src", $el.attr("data-delayed-url"));
-    }
-    $el.removeAttr("data-delayed-url");
-  });
-
-  // LinkedIn videos: the player is wired up at runtime by their JS,
-  // which reads `data-sources` (a JSON array of {type, src, bitrate})
-  // and `data-poster-url`, then injects <source> children. Without the
-  // script, the <video> element is empty and never plays. Materialise
-  // sources + poster as plain HTML so the browser can play them.
-  $("video[data-sources]").each((_, el) => {
-    const $el = $(el);
-    let sources = [];
-    try {
-      sources = JSON.parse($el.attr("data-sources"));
-    } catch {
-      /* leave as-is if malformed */
-    }
-    if (!Array.isArray(sources) || sources.length === 0) return;
-    const poster = $el.attr("data-poster-url");
-    $el.empty();
-    $el.attr("controls", "");
-    $el.attr("preload", "metadata");
-    $el.attr("playsinline", "");
-    if (poster && origin) {
-      $el.attr("poster", rewriteImageUrl(poster, origin));
-    } else if (poster) {
-      $el.attr("poster", poster);
-    }
-    $el.removeAttr("data-sources");
-    $el.removeAttr("data-poster-url");
-    // Sort high bitrate first so browsers pick the best by default.
-    sources.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-    for (const s of sources) {
-      if (!s || !s.src) continue;
-      const src = String(s.src);
-      const type = String(s.type || "video/mp4");
-      $el.append(`<source src="${src.replace(/"/g, "&quot;")}" type="${type}">`);
-    }
-  });
-
-  $("*").each((_, el) => {
-    if (el.type !== "tag" || !el.attribs) return;
-    for (const name of Object.keys(el.attribs)) {
-      if (
-        name === "class" ||
-        name.startsWith("data-tracking") ||
-        name.startsWith("data-test")
-      ) {
-        delete el.attribs[name];
-      }
-    }
-  });
-
-  $('a[href*="linkedin.com/redir/redirect"]').each((_, el) => {
-    const href = $(el).attr("href");
-    try {
-      const target = new URL(href).searchParams.get("url");
-      if (target) $(el).attr("href", target);
-    } catch {
-      /* ignore malformed */
-    }
-  });
-
-  $("a[href]").each((_, el) => {
-    const href = $(el).attr("href");
-    if (!href || !href.includes("trk")) return;
-    const cleaned = stripTrk(href);
-    if (cleaned !== href) $(el).attr("href", cleaned);
-  });
-
-  if (origin) {
-    $('img[src*="licdn.com"]').each((_, el) => {
-      const src = $(el).attr("src");
-      $(el).attr("src", rewriteImageUrl(src, origin));
-    });
-  }
-
-  return $.html().replace(/<!--\s*-->/g, "");
-}
-
 function cleanArticle(article, origin) {
-  return {
-    ...article,
-    description: cleanHtml(article.description, origin),
-    img: rewriteImageUrl(article.img, origin),
-  };
-}
-
-/**
- * Parse newsletter listing page to extract metadata and article links.
- */
-export function parseNewsletterPage(html) {
-  const $ = cheerio.load(html);
-
-  const title = $("h1").text().trim();
-  const description =
-    $('meta[property="og:description"]').attr("content") ||
-    $("h2").first().text().trim();
-  const imageUrl =
-    $('meta[property="og:image"]').attr("content") ||
-    $("img.newsletter-image").attr("data-delayed-url") ||
-    "";
-
-  // Collect from the primary issues list first (preserves newest-first order)
-  // then merge in any other pulse links on the page (e.g. the right-rail
-  // "more articles" list contains older issues LinkedIn collapsed out of the
-  // main list).
-  const links = [];
-  const seen = new Set();
-  const push = (raw) => {
-    if (!raw) return;
-    const clean = raw.split("?")[0];
-    if (!/^https?:\/\/[^/]+\/pulse\/[^/]+/.test(clean)) return;
-    if (clean.includes("/pulse/api/")) return;
-    if (seen.has(clean)) return;
-    seen.add(clean);
-    links.push(clean);
-  };
-
-  $(
-    "section.newsletter__editions-container ul.newsletter__updates div.share-article a"
-  ).each((_, el) => push($(el).attr("href")));
-  $('a[href*="/pulse/"]').each((_, el) => push($(el).attr("href")));
-
-  return { title, description, imageUrl, links };
-}
-
-/**
- * Extract the parent newsletter slug from an article page's HTML.
- */
-export function findParentNewsletter(html) {
-  const $ = cheerio.load(html);
-  let slug = null;
-  $('a[href*="/newsletters/"]').each((_, el) => {
-    const href = $(el).attr("href");
-    if (href) {
-      const match = href.match(/\/newsletters\/([^/?]+)/);
-      if (match && !slug) slug = match[1];
-    }
-  });
-  return slug;
-}
-
-/**
- * Extract the author's profile username from an article page's HTML.
- * Returns the first /in/ link that isn't from comments.
- */
-export function findAuthorProfile(html) {
-  const $ = cheerio.load(html);
-  let username = null;
-  $('a[href*="/in/"]').each((_, el) => {
-    if (username) return;
-    const href = $(el).attr("href") || "";
-    // Skip comment author links (they have tracking params)
-    if (href.includes("trk=")) return;
-    const match = href.match(/\/in\/([^/?]+)/);
-    if (match) username = match[1];
-  });
-  return username;
-}
-
-/**
- * Extract pulse article links from a LinkedIn profile page's HTML.
- */
-export function parseProfileArticles(html) {
-  const $ = cheerio.load(html);
-  const links = [];
-  $('a[href*="/pulse/"]').each((_, el) => {
-    const href = $(el).attr("href");
-    if (href) {
-      const clean = href.split("?")[0];
-      const full = clean.startsWith("http")
-        ? clean
-        : `https://www.linkedin.com${clean}`;
-      if (!links.includes(full)) links.push(full);
-    }
-  });
-  return links;
-}
-
-/**
- * Parse a single article page to extract structured data.
- */
-export function parseArticlePage(html) {
-  const $ = cheerio.load(html);
-
-  let jsonLdData = {};
-  try {
-    const jsonLdScript = $('script[type="application/ld+json"]').first().text();
-    if (jsonLdScript) {
-      jsonLdData = JSON.parse(jsonLdScript);
-    }
-  } catch (e) {
-    // Fall back to HTML selectors if JSON-LD parsing fails
-  }
-
-  const img =
-    jsonLdData.image?.url || $("img.cover-img__image").attr("src") || "";
-  const imgCaption = $("figcaption.cover-img__caption").text().trim() || null;
-  const title = jsonLdData.name || $("h1").text().trim();
-
-  let pubDate = "";
-  if (jsonLdData.datePublished) {
-    pubDate = new Date(jsonLdData.datePublished).toUTCString();
-  }
-
-  const author =
-    jsonLdData.author?.name || $(".publisher-author-card h3").text().trim();
-
-  // The text paragraphs and the inline image blocks live as sibling
-  // children inside `article-content-blocks`, so iterating only
-  // `.article-main__content` would skip the images entirely. Take the
-  // whole container, minus LinkedIn's auto-recommended-articles widget.
-  let description = "";
-  const root = $('div[data-test-id="article-content-blocks"]').first();
-  if (root.length) {
-    root.find(".inline-articles").remove();
-    description = root.html() || "";
-  } else {
-    description = $(".article-main__content").html() || "";
-  }
-
-  return { title, author, img, imgCaption, pubDate, description };
-}
-
-/**
- * Fetch and parse a single article page.
- */
-export async function fetchAndParseArticle(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch article ${url}: ${response.status}`);
-  }
-  const html = await response.text();
-  return {
-    ...parseArticlePage(html),
-    parentNewsletter: findParentNewsletter(html),
-    link: url,
-  };
+  return { ...article, img: rewriteImageUrl(article.img, origin) };
 }
 
 /**
@@ -448,8 +195,9 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
       `LinkedIn returned ${response.status} for newsletter "${newsletter}"`
     );
   }
-  const html = await response.text();
-  const { title, description, imageUrl, links } = parseNewsletterPage(html);
+  const { title, description, imageUrl, links } = await parseNewsletterPage(
+    response
+  );
 
   const origin = new URL(selfUrl).origin;
   const start = (page - 1) * PAGE_SIZE;
@@ -459,7 +207,7 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
   // safely loop until they hit zero items without DoSing the upstream.
   const results = pageLinks.length
     ? await Promise.allSettled(
-        pageLinks.map((link) => fetchAndParseArticle(link))
+        pageLinks.map((link) => fetchAndParseArticle(link, origin))
       )
     : [];
 
@@ -546,13 +294,8 @@ export default {
             { status: articleResponse.status }
           );
         }
-        const articleHtml = await articleResponse.text();
         const article = cleanArticle(
-          {
-            ...parseArticlePage(articleHtml),
-            parentNewsletter: findParentNewsletter(articleHtml),
-            link: articleUrl,
-          },
+          { ...(await parseArticlePage(articleResponse, origin)), link: articleUrl },
           origin
         );
         return new Response(JSON.stringify(article), {
@@ -579,27 +322,32 @@ export default {
         if (!articleResponse.ok) {
           throw new Error(`LinkedIn returned ${articleResponse.status} for article`);
         }
-        const articleHtml = await articleResponse.text();
+        // One pass over the page yields the parent newsletter, the author
+        // profile and the article itself.
+        const parsedArticle = await parseArticlePage(articleResponse, origin);
 
         // If article belongs to a newsletter, redirect to the full feed
-        const newsletterSlug = findParentNewsletter(articleHtml);
+        const newsletterSlug = parsedArticle.parentNewsletter;
         if (newsletterSlug) {
           return Response.redirect(`${origin}/${newsletterSlug}`, 302);
         }
 
         // Standalone article - try to find more articles by the same author
-        const authorUsername = findAuthorProfile(articleHtml);
+        const authorUsername = parsedArticle.authorProfile;
         if (authorUsername) {
           const profileUrl = `https://www.linkedin.com/in/${authorUsername}`;
           const profileResponse = await fetch(profileUrl, {
             headers: { "User-Agent": BROWSER_UA },
           });
           if (profileResponse.ok) {
-            const profileHtml = await profileResponse.text();
-            const articleLinks = parseProfileArticles(profileHtml);
+            const articleLinks = await parseProfileArticles(profileResponse);
             if (articleLinks.length > 0) {
+              // Bounded: the free plan allows 50 subrequests per invocation and
+              // a busy profile lists far more articles than that.
               const results = await Promise.allSettled(
-                articleLinks.map((link) => fetchAndParseArticle(link))
+                articleLinks
+                  .slice(0, PAGE_SIZE)
+                  .map((link) => fetchAndParseArticle(link, origin))
               );
               const articles = results
                 .filter((r) => r.status === "fulfilled")
@@ -633,7 +381,7 @@ export default {
 
         // Fallback: single-item feed from just this article
         const article = cleanArticle(
-          { ...parseArticlePage(articleHtml), link: articleUrl },
+          { ...parsedArticle, link: articleUrl },
           origin
         );
         const metadata = {

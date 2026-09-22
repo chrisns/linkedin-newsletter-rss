@@ -2,6 +2,7 @@ name = "linkedin-newsletter-rss"
 main = "index.js"
 compatibility_date = "2026-03-12"
 workers_dev = true
+# Required by the `xml` package, which pulls in Node's stream module.
 compatibility_flags = ["nodejs_compat"]
 
 route = { pattern = "linkedinrss.cns.me/*", zone_name = "cns.me" }

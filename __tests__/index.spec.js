@@ -176,8 +176,8 @@ const profilePageHtml = `<!DOCTYPE html>
 // --- Pure function tests ---
 
 describe("parseNewsletterPage", () => {
-  it("extracts metadata and links using primary selectors", () => {
-    const result = parseNewsletterPage(newsletterPageHtml);
+  it("extracts metadata and links using primary selectors", async () => {
+    const result = await parseNewsletterPage(newsletterPageHtml);
     expect(result.title).toBe("Tech Leadership Weekly");
     expect(result.description).toBe(
       "Weekly insights on technology and leadership"
@@ -189,8 +189,8 @@ describe("parseNewsletterPage", () => {
     ]);
   });
 
-  it("falls back to pulse links when primary selectors fail", () => {
-    const result = parseNewsletterPage(newsletterPageFallbackHtml);
+  it("falls back to pulse links when primary selectors fail", async () => {
+    const result = await parseNewsletterPage(newsletterPageFallbackHtml);
     expect(result.title).toBe("The AI Beat");
     expect(result.links).toEqual([
       "https://www.linkedin.com/pulse/ai-revolution-jane-smith-abc123",
@@ -198,13 +198,13 @@ describe("parseNewsletterPage", () => {
     ]);
   });
 
-  it("returns empty links for a page with no articles", () => {
-    const result = parseNewsletterPage(emptyNewsletterPageHtml);
+  it("returns empty links for a page with no articles", async () => {
+    const result = await parseNewsletterPage(emptyNewsletterPageHtml);
     expect(result.title).toBe("Empty Newsletter");
     expect(result.links).toEqual([]);
   });
 
-  it("merges right-rail / sidebar pulse links beyond the primary list", () => {
+  it("merges right-rail / sidebar pulse links beyond the primary list", async () => {
     const html = `<!DOCTYPE html><html><head>
       <meta property="og:description" content="d">
     </head><body>
@@ -219,7 +219,7 @@ describe("parseNewsletterPage", () => {
         <li><a href="https://www.linkedin.com/pulse/api/ingraphs/counter">noise</a></li>
       </ul></section>
     </body></html>`;
-    const result = parseNewsletterPage(html);
+    const result = await parseNewsletterPage(html);
     expect(result.links).toEqual([
       "https://www.linkedin.com/pulse/a-1",
       "https://www.linkedin.com/pulse/a-2",
@@ -229,10 +229,10 @@ describe("parseNewsletterPage", () => {
 });
 
 describe("newslettersMatch", () => {
-  it("matches identical slugs", () => {
+  it("matches identical slugs", async () => {
     expect(newslettersMatch("foo-123", "foo-123")).toBe(true);
   });
-  it("matches by trailing numeric id", () => {
+  it("matches by trailing numeric id", async () => {
     expect(
       newslettersMatch(
         "cloudy-with-chance-of-freefall-7439561267528458241",
@@ -240,20 +240,20 @@ describe("newslettersMatch", () => {
       )
     ).toBe(true);
   });
-  it("rejects different ids", () => {
+  it("rejects different ids", async () => {
     expect(newslettersMatch("a-12345678901234567", "b-99999999999999999")).toBe(
       false
     );
   });
-  it("rejects null/undefined", () => {
+  it("rejects null/undefined", async () => {
     expect(newslettersMatch(null, "x")).toBe(false);
     expect(newslettersMatch("x", undefined)).toBe(false);
   });
 });
 
 describe("parseArticlePage", () => {
-  it("extracts data from JSON-LD", () => {
-    const result = parseArticlePage(articlePageHtml);
+  it("extracts data from JSON-LD", async () => {
+    const result = await parseArticlePage(articlePageHtml);
     expect(result.title).toBe("The Future of AI in 2026");
     expect(result.author).toBe("John Doe");
     expect(result.img).toBe("https://media.licdn.com/article-cover.jpg");
@@ -262,15 +262,15 @@ describe("parseArticlePage", () => {
     expect(result.description).toContain("Here are the key trends to watch.");
   });
 
-  it("falls back to HTML selectors when JSON-LD is missing", () => {
-    const result = parseArticlePage(articlePageHtmlNoJsonLd);
+  it("falls back to HTML selectors when JSON-LD is missing", async () => {
+    const result = await parseArticlePage(articlePageHtmlNoJsonLd);
     expect(result.title).toBe("Cloud Native Trends");
     expect(result.author).toBe("Jane Smith");
     expect(result.img).toBe("https://media.licdn.com/fallback-cover.jpg");
     expect(result.description).toContain("Cloud native is the future.");
   });
 
-  it("extracts cover image caption when present", () => {
+  it("extracts cover image caption when present", async () => {
     const html = `<!DOCTYPE html><html><body>
       <h1>Test</h1>
       <figure class="cover-img">
@@ -279,63 +279,63 @@ describe("parseArticlePage", () => {
       </figure>
       <div class="article-main__content"><p>body</p></div>
     </body></html>`;
-    const r = parseArticlePage(html);
+    const r = await parseArticlePage(html);
     expect(r.imgCaption).toBe("A test caption — indeed");
   });
 
-  it("returns null imgCaption when there's no cover caption", () => {
-    const r = parseArticlePage(articlePageHtmlNoJsonLd);
+  it("returns null imgCaption when there's no cover caption", async () => {
+    const r = await parseArticlePage(articlePageHtmlNoJsonLd);
     expect(r.imgCaption).toBeNull();
   });
 });
 
 describe("findParentNewsletter", () => {
-  it("finds newsletter slug from article with newsletter link", () => {
-    expect(findParentNewsletter(articleWithNewsletterHtml)).toBe(
+  it("finds newsletter slug from article with newsletter link", async () => {
+    expect(await findParentNewsletter(articleWithNewsletterHtml)).toBe(
       "a-lot-to-learn-6694123842199154688"
     );
   });
 
-  it("returns null for standalone article", () => {
-    expect(findParentNewsletter(standaloneArticleHtml)).toBeNull();
+  it("returns null for standalone article", async () => {
+    expect(await findParentNewsletter(standaloneArticleHtml)).toBeNull();
   });
 });
 
 describe("findAuthorProfile", () => {
-  it("extracts author username from article page", () => {
-    expect(findAuthorProfile(standaloneArticleWithAuthorHtml)).toBe(
+  it("extracts author username from article page", async () => {
+    expect(await findAuthorProfile(standaloneArticleWithAuthorHtml)).toBe(
       "cnesbittsmith"
     );
   });
 
-  it("skips comment author links with tracking params", () => {
+  it("skips comment author links with tracking params", async () => {
     // Should find cnesbittsmith, not someone-else (which has trk= param)
-    expect(findAuthorProfile(standaloneArticleWithAuthorHtml)).toBe(
+    expect(await findAuthorProfile(standaloneArticleWithAuthorHtml)).toBe(
       "cnesbittsmith"
     );
   });
 
-  it("returns null when no profile link exists", () => {
-    expect(findAuthorProfile(emptyNewsletterPageHtml)).toBeNull();
+  it("returns null when no profile link exists", async () => {
+    expect(await findAuthorProfile(emptyNewsletterPageHtml)).toBeNull();
   });
 });
 
 describe("parseProfileArticles", () => {
-  it("extracts unique pulse article links", () => {
-    const links = parseProfileArticles(profilePageHtml);
+  it("extracts unique pulse article links", async () => {
+    const links = await parseProfileArticles(profilePageHtml);
     expect(links).toEqual([
       "https://www.linkedin.com/pulse/teaching-computer-understand-bsl-cns-rhs8e",
       "https://www.linkedin.com/pulse/another-article-cns-xyz123",
     ]);
   });
 
-  it("returns empty array when no articles found", () => {
-    expect(parseProfileArticles(emptyNewsletterPageHtml)).toEqual([]);
+  it("returns empty array when no articles found", async () => {
+    expect(await parseProfileArticles(emptyNewsletterPageHtml)).toEqual([]);
   });
 });
 
 describe("buildRssFeed", () => {
-  it("produces valid RSS XML with articles", () => {
+  it("produces valid RSS XML with articles", async () => {
     const metadata = {
       title: "Test Newsletter",
       description: "A test newsletter",
@@ -367,7 +367,7 @@ describe("buildRssFeed", () => {
     expect(result).toContain(selfUrl);
   });
 
-  it("handles empty articles list", () => {
+  it("handles empty articles list", async () => {
     const metadata = {
       title: "Empty",
       description: "No articles",
@@ -719,7 +719,7 @@ describe("Pagination", () => {
 // --- Image proxy ---
 
 describe("Image proxy", () => {
-  it("encode/decode are inverses", () => {
+  it("encode/decode are inverses", async () => {
     const url = "https://media.licdn.com/dms/image/foo/bar?q=1&x=2";
     expect(decodeImgId(encodeImgId(url))).toBe(url);
   });
@@ -763,8 +763,8 @@ describe("Image proxy", () => {
 describe("cleanHtml", () => {
   const origin = "https://linkedinrss.cns.me";
 
-  it("strips data-tracking-* and data-test-* attributes", () => {
-    const out = cleanHtml(
+  it("strips data-tracking-* and data-test-* attributes", async () => {
+    const out = await cleanHtml(
       '<p data-tracking-control-name="x" data-test-id="y" data-keep="ok">hi</p>',
       origin
     );
@@ -773,14 +773,14 @@ describe("cleanHtml", () => {
     expect(out).toContain('data-keep="ok"');
   });
 
-  it("removes class attributes", () => {
-    const out = cleanHtml('<p class="font-[700]">hi</p>', origin);
+  it("removes class attributes", async () => {
+    const out = await cleanHtml('<p class="font-[700]">hi</p>', origin);
     expect(out).not.toContain("class=");
     expect(out).toContain("hi");
   });
 
-  it("unwraps LinkedIn redirect links", () => {
-    const out = cleanHtml(
+  it("unwraps LinkedIn redirect links", async () => {
+    const out = await cleanHtml(
       '<a href="https://www.linkedin.com/redir/redirect?url=https%3A%2F%2Fexample.com%2Fa%3Fb%3D1&urlhash=xyz&trk=foo">link</a>',
       origin
     );
@@ -788,8 +788,8 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("redir/redirect");
   });
 
-  it("strips ?trk= from LinkedIn URLs", () => {
-    const out = cleanHtml(
+  it("strips ?trk= from LinkedIn URLs", async () => {
+    const out = await cleanHtml(
       '<a href="https://www.linkedin.com/in/cnesbittsmith?trk=article-ssr-frontend-pulse_little-text-block">x</a>',
       origin
     );
@@ -797,8 +797,8 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("trk=");
   });
 
-  it("strips ?trk= from outbound (non-LinkedIn) URLs", () => {
-    const out = cleanHtml(
+  it("strips ?trk= from outbound (non-LinkedIn) URLs", async () => {
+    const out = await cleanHtml(
       '<a href="https://en.wikipedia.org/wiki/Foo?trk=article-ssr">w</a>',
       origin
     );
@@ -806,8 +806,8 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("trk=");
   });
 
-  it("strips ?trk= even when after a URL fragment (malformed)", () => {
-    const out = cleanHtml(
+  it("strips ?trk= even when after a URL fragment (malformed)", async () => {
+    const out = await cleanHtml(
       '<a href="https://en.wikipedia.org/wiki/Foo#Bar?trk=x">w</a>',
       origin
     );
@@ -815,16 +815,16 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("trk=");
   });
 
-  it("rewrites licdn img src to image proxy", () => {
+  it("rewrites licdn img src to image proxy", async () => {
     const upstream = "https://media.licdn.com/dms/image/foo.jpg";
-    const out = cleanHtml(`<img src="${upstream}">`, origin);
+    const out = await cleanHtml(`<img src="${upstream}">`, origin);
     expect(out).toContain(`${origin}/img/${encodeImgId(upstream)}`);
     expect(out).not.toContain("media.licdn.com");
   });
 
-  it("promotes data-delayed-url to src (LinkedIn lazy loader)", () => {
+  it("promotes data-delayed-url to src (LinkedIn lazy loader)", async () => {
     const upstream = "https://media.licdn.com/lazy.jpg";
-    const out = cleanHtml(
+    const out = await cleanHtml(
       `<img alt="x" data-delayed-url="${upstream}">`,
       origin
     );
@@ -832,33 +832,33 @@ describe("cleanHtml", () => {
     expect(out).not.toContain("data-delayed-url");
   });
 
-  it("removes empty HTML comments", () => {
-    const out = cleanHtml("<p>hi<!---->there<!--   --></p>", origin);
+  it("removes empty HTML comments", async () => {
+    const out = await cleanHtml("<p>hi<!---->there<!--   --></p>", origin);
     expect(out).not.toContain("<!---->");
     expect(out).not.toContain("<!--   -->");
     expect(out).toContain("hithere");
   });
 
-  it("returns empty input unchanged", () => {
-    expect(cleanHtml("", origin)).toBe("");
-    expect(cleanHtml(null, origin)).toBe(null);
+  it("returns empty input unchanged", async () => {
+    expect(await cleanHtml("", origin)).toBe("");
+    expect(await cleanHtml(null, origin)).toBe(null);
   });
 });
 
 describe("stripTrk", () => {
-  it("removes lone trk= query", () => {
+  it("removes lone trk= query", async () => {
     expect(stripTrk("https://x/y?trk=foo")).toBe("https://x/y");
   });
-  it("removes trk= when followed by other params", () => {
+  it("removes trk= when followed by other params", async () => {
     expect(stripTrk("https://x/y?trk=foo&bar=1")).toBe("https://x/y?bar=1");
   });
-  it("removes trk= when preceded by other params", () => {
+  it("removes trk= when preceded by other params", async () => {
     expect(stripTrk("https://x/y?bar=1&trk=foo")).toBe("https://x/y?bar=1");
   });
-  it("removes trk= even after a fragment", () => {
+  it("removes trk= even after a fragment", async () => {
     expect(stripTrk("https://x/y#sec?trk=foo")).toBe("https://x/y#sec");
   });
-  it("leaves URLs without trk untouched", () => {
+  it("leaves URLs without trk untouched", async () => {
     expect(stripTrk("https://x/y?z=1")).toBe("https://x/y?z=1");
   });
 });
