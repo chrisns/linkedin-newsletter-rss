@@ -158,6 +158,16 @@ async function cachedArticle(url, origin, ctx) {
   return article;
 }
 
+/** Reverses the percent-encoding applied when the title went into a header. */
+function decodeFeedTitle(value) {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function htmlResponse(html, status = 200) {
   return new Response(html, {
     status,
@@ -406,14 +416,16 @@ export default {
           const { rss, title } = await generateFeed(slug, request.url, page, ctx);
           // Carried as a header so a cache hit still knows the title, and the
           // request can be counted without rebuilding the feed to learn it.
-          return { body: rss, meta: { "x-feed-title": title } };
+          // Percent-encoded: a header value must be ASCII, and a newsletter
+          // can be called "IA générative".
+          return { body: rss, meta: { "x-feed-title": encodeURIComponent(title) } };
         },
       });
       // Counted on every request, cached or not: the question is how often a
       // newsletter is asked for, not how often we rebuild it.
       recordHit(env, ctx, {
         slug,
-        title: feed.headers.get("x-feed-title") || "",
+        title: decodeFeedTitle(feed.headers.get("x-feed-title")),
         kind: "newsletter",
       });
       return feed;
