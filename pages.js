@@ -63,7 +63,8 @@ ${body}
     <div>
       <p class="cl-h">About</p>
       <p class="cl-note">LinkedIn publishes newsletters but no feeds. This reads the
-      public page and gives you RSS. It stores nothing and it asks you for nothing.</p>
+      public page and gives you RSS. No account, no cookies, nothing about you.
+      It does count how often each newsletter is fetched, and publishes the busiest.</p>
     </div>
     <div>
       <p class="cl-h">Elsewhere</p>
@@ -120,8 +121,9 @@ function popularSection(popular) {
   <div class="dash">
     <div class="dash-head">
       <h3>Feeds served</h3>
-      <p class="dash-note">Counted per request, not per reader. A busy newsletter polled
-      by one person can outrank a quiet one read by many.</p>
+      <p class="dash-note">Counted per request, not per reader, and nothing is recorded
+      about who asked. A newsletter polled often by one person can outrank a quiet
+      one read by many.</p>
     </div>
     <div class="bars">
 ${rows}

@@ -63,6 +63,31 @@ npm run build:css    # regenerate styles.generated.js
 
 Requires Node.js 24+. Tests use [Vitest](https://vitest.dev/) with [@cloudflare/vitest-pool-workers](https://developers.cloudflare.com/workers/testing/vitest-integration/).
 
+## What it records
+
+The Worker writes one [Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/)
+data point per feed request: the newsletter slug, its title, and the route kind.
+Nothing about the reader. The free plan includes 100,000 data points a day.
+
+Reading costs a query against a 10,000 per day allowance, so the homepage never
+queries it. A cron trigger runs the SQL every 15 minutes and writes the top 20
+to KV; the homepage reads one key. That is 96 KV writes a day against a free
+allowance of 1,000.
+
+Both bindings are optional. Without them the Worker still serves feeds, and the
+homepage omits the most-followed panel.
+
+To turn the panel on:
+
+```bash
+npx wrangler kv namespace create POPULAR
+npx wrangler secret put CF_ACCOUNT_ID
+npx wrangler secret put CF_ANALYTICS_TOKEN   # needs Account Analytics: Read
+```
+
+Then paste the namespace id into `wrangler.toml` and uncomment the
+`kv_namespaces` and `triggers` blocks.
+
 ## How it works
 
 ### Parsing

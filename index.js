@@ -1,6 +1,7 @@
 import xml from "xml";
 
 import { errorHtml, FAVICON, homepageHtml } from "./pages.js";
+import { readPopular, recordHit, refreshPopular } from "./popular.js";
 
 import {
   cleanHtml,
@@ -170,7 +171,7 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
     .filter((r) => r.status === "rejected")
     .forEach((r) => console.error(`Article fetch failed: ${r.reason.message}`));
 
-  return buildRssFeed(
+  const rss = buildRssFeed(
     {
       title,
       description,
@@ -180,6 +181,7 @@ async function generateFeed(newsletter, selfUrl, page = 1) {
     articles,
     selfUrl
   );
+  return { rss, title };
 }
 
 async function handleImageProxy(id) {
@@ -206,14 +208,14 @@ async function handleImageProxy(id) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     try {
       const reqUrl = new URL(request.url);
       const pathname = reqUrl.pathname;
       const origin = reqUrl.origin;
 
       if (pathname === "/") {
-        return htmlResponse(homepageHtml());
+        return htmlResponse(homepageHtml(await readPopular(env)));
       }
 
       // A pink dot, the same mark as the wordmark. Inline so it costs no
@@ -352,8 +354,9 @@ export default {
 
       const pageParam = parseInt(reqUrl.searchParams.get("page") || "1", 10);
       const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-      const xmlContent = await generateFeed(slug, request.url, page);
-      return new Response(xmlContent, {
+      const { rss, title } = await generateFeed(slug, request.url, page);
+      recordHit(env, ctx, { slug, title, kind: "newsletter" });
+      return new Response(rss, {
         headers: { "Content-Type": "application/rss+xml" },
       });
     } catch (error) {
@@ -383,5 +386,18 @@ export default {
         502
       );
     }
+  },
+
+  /**
+   * Refreshes the most-followed list. Reading Analytics Engine costs a query
+   * against a 10,000 per day allowance, so it happens here rather than on every
+   * homepage request.
+   */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      refreshPopular(env)
+        .then((result) => console.log("Popularity refresh:", JSON.stringify(result)))
+        .catch((error) => console.error("Popularity refresh failed:", error.message))
+    );
   },
 };

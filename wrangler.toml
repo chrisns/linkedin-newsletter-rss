@@ -6,3 +6,25 @@ workers_dev = true
 compatibility_flags = ["nodejs_compat"]
 
 route = { pattern = "linkedinrss.cns.me/*", zone_name = "cns.me" }
+
+# Popularity. The dataset needs no pre-created resource, so collection starts
+# on the next deploy. Free plan: 100,000 data points written per day.
+[[analytics_engine_datasets]]
+binding = "AE"
+dataset = "linkedinrss"
+
+# Publishing the numbers needs a KV namespace, which has to be created first:
+#
+#   npx wrangler kv namespace create POPULAR
+#   npx wrangler secret put CF_ACCOUNT_ID
+#   npx wrangler secret put CF_ANALYTICS_TOKEN   # Account Analytics: Read
+#
+# Then paste the returned id below and uncomment both blocks. Until then the
+# Worker still collects; the homepage simply omits the most-followed panel.
+#
+# [[kv_namespaces]]
+# binding = "POPULAR"
+# id = "PASTE_THE_ID_HERE"
+#
+# [triggers]
+# crons = ["*/15 * * * *"]
