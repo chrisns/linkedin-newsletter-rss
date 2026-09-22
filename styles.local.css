@@ -1,47 +1,19 @@
 /* ============================================================
    Site-local layer — linkedinrss.cns.me
 
-   The CNS design system has no form input, and this site is a form. These
-   rules fill that one gap and nothing else.
+   Only what is genuinely specific to this one site. The form field it used to
+   carry now lives in the design system, as `.field` in the govbuy kit.
 
    Every value here is a design token. No raw colours, no raw type. Changing
    --pink in the design system still changes this file's output, which is the
    invariant the system exists to protect. `npm run build:css` fails if a raw
    hex colour appears below.
-
-   If an input lands in the design system, delete the .field rules and use it.
    ============================================================ */
 
-.field {
-  flex: 1 1 0;
-  min-width: 0;
-  font-family: var(--font-body);
-  font-size: var(--t-base);
-  color: var(--ink);
-  background: var(--bone);
-  border: 0;
-  padding: var(--s-3) var(--s-4);
-}
-.field::placeholder {
-  color: var(--ink-4);
-}
-.field:focus {
-  outline: var(--bw-rule) solid var(--pink);
-  outline-offset: calc(-1 * var(--bw-rule));
-}
-
-/* The .install strip is built for a <code> element. Let it hold a form. */
-.install form {
-  display: flex;
-  align-items: stretch;
-  width: 100%;
-  min-width: 0;
-}
-.install.is-error {
-  border-color: var(--pink-deep);
-}
-
-/* A feed URL the visitor is meant to copy, rather than a shell command. */
+/* A feed URL the visitor is meant to copy, rather than a shell command. The
+   kit's `.install code` sets white-space: nowrap, which is right for an install
+   line and wrong here: a feed URL is long, and hiding half of it under the copy
+   button helps nobody. */
 .feed-url {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
@@ -51,8 +23,6 @@
   padding: var(--s-3) var(--s-4);
   flex: 1 1 0;
   min-width: 0;
-  /* A feed URL is long and there is nothing to gain by hiding half of it
-     under the copy button. Wrap instead of scrolling. */
   overflow-wrap: anywhere;
   align-self: center;
 }
